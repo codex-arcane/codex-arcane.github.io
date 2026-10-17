@@ -7,12 +7,13 @@
 <title>Owner panel</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;700&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="assets/favicon.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="top">
-  <h1>Owner panel</h1>
+  <div class="titlebar"><a class="brand" href="index.html"><img src="assets/logo.png" alt="Home" width="64" height="58"></a><h1>Owner panel</h1></div>
   <p id="who" class="muted"></p>
 </header>
 
@@ -26,10 +27,20 @@
 
   <div id="panel" hidden>
     <section>
-      <h2>Categories</h2>
-      <ul id="cats" class="rows"></ul>
+      <h2>Groups and categories</h2>
+      <p class="muted">Groups (like Equipment) appear as the top tabs. Categories sit inside a group.</p>
+      <div id="tree"></div>
+
+      <h3>Add a group</h3>
       <div class="row-add">
-        <input id="newname" placeholder="New category name, e.g. Weapons" aria-label="New category name">
+        <input id="gname" placeholder="Group name, e.g. Equipment" aria-label="New group name">
+        <button id="gbtn">Add group</button>
+      </div>
+
+      <h3>Add a category</h3>
+      <div class="row-add">
+        <input id="newname" placeholder="Category name, e.g. Additional Gear" aria-label="New category name">
+        <select id="newgroup" aria-label="Group for the new category"></select>
         <button id="newbtn">Choose JSON and add</button>
         <input id="newfile" type="file" accept=".json,application/json" hidden>
       </div>
@@ -49,5 +60,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>
 <script src="admin.js"></script>
+<script src="ui.js"></script>
 </body>
 </html>

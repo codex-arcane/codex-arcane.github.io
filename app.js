@@ -2,7 +2,7 @@ const $ = (s) => document.querySelector(s);
 const PAGE = 60;
 const CFG = window.GEAR_CONFIG || {};
 const remote = !!(CFG.supabaseUrl && CFG.supabaseAnonKey);
-const state = { cats: [], cat: null, cache: {}, items: [], q: "", type: "", shown: PAGE, view: "grid", favOnly: false };
+const state = { cats: [], cat: null, cache: {}, items: [], q: "", type: "", shown: PAGE, view: "grid", favOnly: false, groups: [], group: null };
 // Settings and favorites. Guests: saved in this browser. Signed in: also saved to the account.
 const LS_KEY = "gear-prefs", DEFAULTS = { view: "grid", favOnly: false, favs: [] };
 const prefs = (() => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(LS_KEY) || "{}") }; } catch { return { ...DEFAULTS }; } })();
@@ -52,13 +52,31 @@ async function loadRemote() {
   });
   if (!res.ok) throw new Error(res.status);
   const files = (await res.json()).filter((f) => f.name.endsWith(".json"));
-  return Promise.all(files.map(async (f) => {
+  const cats = await Promise.all(files.map(async (f) => {
     const id = f.name.replace(/\.json$/, "");
     const url = `${base}/object/public/site/data/${encodeURIComponent(f.name)}`;
     const items = await fetch(url, { cache: "no-cache" }).then((r) => r.json());
     state.cache[id] = items.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     return { id, name: id.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), count: items.length, files: [url], images: true };
   }));
+  let structure = { groups: [] };
+  try {
+    const r = await fetch(`${base}/object/public/site/config/structure.json`, { cache: "no-cache" });
+    if (r.ok) structure = await r.json();
+  } catch {}
+  const byId = Object.fromEntries(cats.map((c) => [c.id, c]));
+  const used = new Set();
+  const groups = (structure.groups || []).map((g) => ({
+    id: g.id, name: g.name,
+    cats: (g.categories || []).filter((c) => byId[c.id] && !used.has(c.id)).map((c) => {
+      used.add(c.id);
+      byId[c.id].name = c.name || byId[c.id].name;
+      return byId[c.id];
+    }),
+  }));
+  const loose = cats.filter((c) => !used.has(c.id));
+  if (loose.length) groups.push({ id: "unsorted", name: "Unsorted", cats: loose });
+  return { cats: groups.flatMap((g) => g.cats), groups };
 }
 
 function empty(msg) {
@@ -69,11 +87,12 @@ function empty(msg) {
 async function boot() {
   try {
     if (remote) {
-      state.cats = await loadRemote();
+      Object.assign(state, await loadRemote());
     } else {
       const res = await fetch("data/manifest.json");
       if (!res.ok) throw new Error(res.status);
       state.cats = (await res.json()).categories;
+      state.groups = [{ id: "all", name: "All", cats: state.cats }];
     }
   } catch {
     return empty(remote
@@ -83,11 +102,32 @@ async function boot() {
   if (!state.cats.length) return empty(remote
     ? "No categories yet. Sign in at admin.html and upload a JSON file."
     : "No categories yet. Add a folder with a .json file inside data/ and rebuild the manifest.");
-  $("#tabs").innerHTML = state.cats
-    .map((c) => `<button data-id="${esc(c.id)}">${esc(c.name)}<small>${c.count}</small></button>`)
-    .join("");
   $("#tabs").onclick = (e) => { const b = e.target.closest("button"); if (b) pick(b.dataset.id); };
+  $("#groups").onclick = (e) => { const b = e.target.closest("button"); if (b) pickGroup(b.dataset.g); };
   pick(location.hash.slice(1) || prefs.cat);
+}
+
+// Two rows of tabs: groups (like Equipment) on top, the categories inside the open group below.
+function renderTabs() {
+  const g = state.group;
+  $("#groups").hidden = !remote;
+  $("#groups").innerHTML = state.groups
+    .map((x) => `<button data-g="${esc(x.id)}" aria-current="${x === g}">${esc(x.name)}</button>`)
+    .join("");
+  $("#tabs").innerHTML = g.cats
+    .map((c) => `<button data-id="${esc(c.id)}" aria-current="${c === state.cat}">${esc(c.name)}<small>${c.count}</small></button>`)
+    .join("");
+}
+
+function pickGroup(gid) {
+  const g = state.groups.find((x) => x.id === gid);
+  if (!g) return;
+  if (g.cats.length) return pick(g.cats[0].id);
+  state.group = g; state.cat = null; state.items = [];
+  renderTabs();
+  $("#count").textContent = "";
+  $("#more").hidden = true;
+  empty("No categories in this group yet.");
 }
 
 async function pick(id) {
@@ -95,7 +135,8 @@ async function pick(id) {
   state.cat = cat;
   prefs.cat = cat.id; savePrefs();
   location.hash = cat.id;
-  document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-current", b.dataset.id === cat.id));
+  state.group = state.groups.find((g) => g.cats.includes(cat));
+  renderTabs();
   if (!state.cache[cat.id]) {
     const lists = await Promise.all(cat.files.map((f) => fetch(f).then((r) => r.json())));
     state.cache[cat.id] = lists.flat().sort((a, b) => (a.name || "").localeCompare(b.name || ""));

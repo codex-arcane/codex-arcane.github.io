@@ -33,7 +33,7 @@ function applyPrefs() {
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-// The scraper saved Windows paths like raffydb_data\images\x.webp, so only the file name is used.
+// Icon paths may be Windows-style, so only the file name is used.
 function imgSrc(cat, item) {
   const file = (item.image_file || item.image_url || "").split(/[\\/]/).pop();
   if (!file || !cat.images) return "";
@@ -104,7 +104,8 @@ async function boot() {
     : "No categories yet. Add a folder with a .json file inside data/ and rebuild the manifest.");
   $("#tabs").onclick = (e) => { const b = e.target.closest("button"); if (b) pick(b.dataset.id); };
   $("#groups").onclick = (e) => { const b = e.target.closest("button"); if (b) pickGroup(b.dataset.g); };
-  pick(location.hash.slice(1) || prefs.cat);
+  const start = state.cats.find((c) => c.id === location.hash.slice(1));
+  start ? pick(start.id) : showHome();
 }
 
 // Two rows of tabs: groups (like Equipment) on top, the categories inside the open group below.
@@ -114,25 +115,40 @@ function renderTabs() {
   $("#groups").innerHTML = state.groups
     .map((x) => `<button data-g="${esc(x.id)}" aria-current="${x === g}">${esc(x.name)}</button>`)
     .join("");
-  $("#tabs").innerHTML = g.cats
+  $("#tabs").hidden = !g;
+  $("#tabs").innerHTML = (g ? g.cats : [])
     .map((c) => `<button data-id="${esc(c.id)}" aria-current="${c === state.cat}">${esc(c.name)}<small>${c.count}</small></button>`)
     .join("");
+}
+
+// Nothing is open at first: categories stay hidden until their group is pressed.
+function closeCategory(text) {
+  state.cat = null; state.items = [];
+  $(".tools").hidden = true;
+  $("#more").hidden = true;
+  empty(text);
+}
+
+function showHome() {
+  state.group = remote ? null : state.groups[0];
+  renderTabs();
+  closeCategory(remote ? "Choose a group above to see its categories." : "Choose a category above.");
 }
 
 function pickGroup(gid) {
   const g = state.groups.find((x) => x.id === gid);
   if (!g) return;
-  if (g.cats.length) return pick(g.cats[0].id);
-  state.group = g; state.cat = null; state.items = [];
+  history.replaceState(null, "", location.pathname + location.search);
+  if (state.group === g) return showHome();  // pressing the open group again hides its categories
+  state.group = g;
   renderTabs();
-  $("#count").textContent = "";
-  $("#more").hidden = true;
-  empty("No categories in this group yet.");
+  closeCategory(g.cats.length ? `Choose a category in ${g.name}.` : "No categories in this group yet.");
 }
 
 async function pick(id) {
   const cat = state.cats.find((c) => c.id === id) || state.cats[0];
   state.cat = cat;
+  $(".tools").hidden = false;
   prefs.cat = cat.id; savePrefs();
   location.hash = cat.id;
   state.group = state.groups.find((g) => g.cats.includes(cat));
@@ -166,7 +182,7 @@ function render() {
   $("#items").innerHTML = found.slice(0, state.shown).map((i) => {
     const src = imgSrc(cat, i);
     const summary = (i.stats || []).slice(0, 4).join(", ");
-    return `<button class="slot" data-id="${i.id}">${src ? `<img src="${src}" alt="" loading="lazy">` : ""}<span>${isFav(i) ? "\u2605 " : ""}${esc(i.name)}</span><em>${esc(summary)}</em></button>`;
+    return `<button class="slot" data-id="${i.id}">${src ? `<img src="${src}" alt="" loading="lazy" decoding="async">` : ""}<span>${isFav(i) ? "\u2605 " : ""}${esc(i.name)}</span><em>${esc(summary)}</em></button>`;
   }).join("");
   $("#more").hidden = found.length <= state.shown;
 }
@@ -184,8 +200,7 @@ function detail(item) {
     <div class="head">${src ? `<img src="${src}" alt="">` : ""}<div><h2>${esc(item.name)}</h2>${(item.obtain_types || []).map((t) => `<span class="badge">${esc(t)}</span>`).join("")}</div></div>
     ${stats.length ? `<h3>Stats</h3>${list(stats)}` : ""}
     ${mats.length || pts.length ? `<h3>Recipe</h3>${list(mats.concat(pts))}` : ""}
-    ${item.obtained_from?.text ? `<h3>Obtained from</h3><p>${esc(item.obtained_from.text)}</p>` : ""}
-    ${item.url ? `<p><a href="${esc(item.url)}" target="_blank" rel="noopener" style="color:var(--accent)">View on RaffyDB</a></p>` : ""}`;
+    ${item.obtained_from?.text ? `<h3>Obtained from</h3><p>${esc(item.obtained_from.text)}</p>` : ""}`;
   const fb = document.createElement("button");
   fb.type = "button"; fb.className = "fav";
   const label = () => (fb.textContent = isFav(item) ? "Remove from favorites" : "Add to favorites");

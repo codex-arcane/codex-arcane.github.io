@@ -6,13 +6,15 @@
 <title>Gear archive</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;700&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="assets/favicon.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="top">
-  <h1>Gear archive</h1>
+  <div class="titlebar"><a class="brand" href="index.html"><img src="assets/logo.png" alt="Home" width="64" height="58"></a><h1>Gear archive</h1></div>
   <div id="acct"></div>
+  <nav id="groups" aria-label="Groups"></nav>
   <nav id="tabs" aria-label="Categories"></nav>
 </header>
 <div id="banner" hidden>
@@ -41,5 +43,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>
 <script src="app.js"></script>
+<script src="ui.js"></script>
 </body>
 </html>

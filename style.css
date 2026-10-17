@@ -1,7 +1,7 @@
 /* Change the look here: colors and sizes are variables. */
 :root {
   --bg: #e6cf9f;                      /* shows while the background image loads */
-  --panel: rgba(252, 241, 214, .5);   /* translucent panels let the parchment show through */
+  --panel: rgba(252, 241, 214, .6);   /* translucent panels let the parchment show through */
   --edge: rgba(94, 62, 28, .4);
   --text: #35210e;
   --muted: #5e4426;
@@ -14,7 +14,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.5 var(--font); }
-body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: url(assets/background.jpg) center / cover no-repeat; }
+body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: url(assets/background.jpg) center / cover no-repeat; will-change: transform; transform: translateZ(0); }
 button, input, select { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -110,7 +110,6 @@ dialog .fav { margin-top: 1rem; padding: .5rem 1rem; background: none; border: 1
 #groups button { background: none; border: 0; border-bottom: 3px solid transparent; padding: .45rem 1rem; cursor: pointer; color: var(--muted); font: 700 1.35rem/1.2 var(--display); white-space: nowrap; }
 #groups button[aria-current="true"] { color: var(--text); border-color: var(--accent); }
 #tabs { margin-top: .15rem; }
-.slot, .tools input, .tools select, .views button, #banner, #more, .rows li, .admin button, #acct button, .admin form input, #totop { -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
 dialog { background: rgba(250, 240, 216, .94); }
 dialog h2, .admin h2 { font-family: var(--display); font-weight: 700; }
 .admin h3 { font-family: var(--display); margin: 1.5rem 0 .5rem; }
@@ -122,3 +121,11 @@ dialog h2, .admin h2 { font-family: var(--display); font-weight: 700; }
 #totop:hover { border-color: var(--accent); color: var(--accent); }
 #totop[hidden] { display: none; }
 dialog a { color: var(--accent); }
+
+/* Smooth scrolling: skip drawing items that are off screen */
+.slot { content-visibility: auto; contain-intrinsic-size: auto 120px; }
+.tools[hidden], #tabs[hidden] { display: none; }
+
+/* Site name */
+.top h1.wordmark { font: 700 clamp(1.6rem, 4.5vw, 2.5rem)/1.1 "Cinzel Decorative", var(--display); letter-spacing: .04em; text-shadow: 0 1px 0 rgba(255, 240, 200, .7); }
+.page-label { margin-left: .5rem; padding-left: 1rem; border-left: 1px solid var(--edge); font: 600 1.3rem/1 var(--display); color: var(--muted); }

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gear archive</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>Gear archive</h1>
+  <div id="acct"></div>
+  <nav id="tabs" aria-label="Categories"></nav>
+</header>
+<div id="banner" hidden>
+  <span>You're browsing as a guest. Your favorites and settings are saved only in this browser. <a href="account.html?next=index.html">Create an account</a> to keep them on any device.</span>
+  <button id="dismiss">Dismiss</button>
+</div>
+
+<main>
+  <div class="tools">
+    <input id="q" type="search" placeholder="Search name, stat, or source" aria-label="Search items">
+    <select id="type" aria-label="Filter by how it's obtained"></select>
+    <label class="chk"><input type="checkbox" id="favonly"> Favorites only</label>
+    <div class="views" role="group" aria-label="Layout">
+      <button id="v-grid" aria-pressed="true">Slots</button>
+      <button id="v-list" aria-pressed="false">List</button>
+    </div>
+    <span id="count" aria-live="polite"></span>
+  </div>
+  <div id="items"></div>
+  <button id="more" hidden>Show more</button>
+</main>
+
+<dialog id="dlg"><div id="dlg-body"></div><form method="dialog"><button>Close</button></form></dialog>
+
+<footer>Item data collected from RaffyDB.</footer>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Account</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>Account</h1>
+  <nav id="tabs" aria-label="Account mode">
+    <button id="t-in" aria-current="true">Sign in</button>
+    <button id="t-up">Create account</button>
+  </nav>
+</header>
+
+<main class="admin">
+  <form id="form" autocomplete="on">
+    <label for="user">Username</label>
+    <input id="user" name="username" autocomplete="username" required minlength="3" maxlength="20" pattern="[A-Za-z0-9_]{3,20}">
+    <p id="hint" class="muted">Letters, numbers and underscores, 3 to 20 characters.</p>
+
+    <label for="pass">Password</label>
+    <input id="pass" name="password" type="password" autocomplete="current-password" required minlength="8">
+
+    <div id="confirm-wrap" hidden>
+      <label for="pass2">Repeat password</label>
+      <input id="pass2" type="password" autocomplete="new-password" minlength="8">
+    </div>
+
+    <button id="submit" class="primary">Sign in</button>
+    <p id="msg" class="muted" role="status"></p>
+  </form>
+
+  <section id="done" hidden>
+    <p id="who"></p>
+    <p><a id="adminlink" href="admin.html" hidden>Open owner panel</a></p>
+    <button id="signout">Sign out</button> <a href="index.html" class="muted">View site</a>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="account.js"></script>
+</body>
+</html>

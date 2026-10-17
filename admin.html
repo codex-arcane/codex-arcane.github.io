@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Owner panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>Owner panel</h1>
+  <p id="who" class="muted"></p>
+</header>
+
+<main class="admin">
+  <p id="msg" class="muted" role="status"></p>
+
+  <section id="denied" hidden>
+    <p>This account isn't allowed to use the owner panel.</p>
+    <button class="signout">Sign out</button>
+  </section>
+
+  <div id="panel" hidden>
+    <section>
+      <h2>Categories</h2>
+      <ul id="cats" class="rows"></ul>
+      <div class="row-add">
+        <input id="newname" placeholder="New category name, e.g. Weapons" aria-label="New category name">
+        <button id="newbtn">Choose JSON and add</button>
+        <input id="newfile" type="file" accept=".json,application/json" hidden>
+      </div>
+    </section>
+
+    <section>
+      <h2>Images</h2>
+      <p class="muted">One folder for every category. Existing images with the same file name are replaced.</p>
+      <button id="imgbtn">Choose images folder</button>
+      <input id="imgfile" type="file" webkitdirectory multiple hidden>
+    </section>
+
+    <p><button class="signout">Sign out</button> <a href="index.html" class="muted">View site</a></p>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

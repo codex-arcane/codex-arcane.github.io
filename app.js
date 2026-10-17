@@ -165,11 +165,27 @@ async function pick(id) {
   render();
 }
 
+// Dye chips: colored boxes like RaffyDB. Works with {code,color} objects or plain "A30" strings.
+function readable(hex) { // black or white text, whichever is easier to read on this color
+  let h = hex.slice(1);
+  if (h.length === 3) h = [...h].map((c) => c + c).join("");
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+  return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? "#1b1206" : "#fff";
+}
+function dyeChips(item) {
+  return (item.dyes || []).map((d) => {
+    const code = typeof d === "string" ? d : d.code;
+    const color = typeof d === "object" && /^#[0-9a-f]{6}$/i.test(d.color || "") ? d.color : "";
+    const style = color ? ` style="background:${color};color:${readable(color)}"` : "";
+    return `<i class="dye"${style}>${esc(code)}</i>`;
+  }).join("");
+}
+
 function matches(i) {
   if (state.favOnly && !isFav(i)) return false;
   if (state.type && !(i.obtain_types || []).includes(state.type)) return false;
   if (!state.q) return true;
-  const hay = [i.name, ...(i.stats || []), ...(i.obtain_types || []), i.obtained_from?.text].join(" ").toLowerCase();
+  const hay = [i.name, ...(i.stats || []), ...(i.obtain_types || []), i.obtained_from?.text, ...(i.dyes || []).map((d) => (typeof d === "string" ? d : d.code))].join(" ").toLowerCase();
   return hay.includes(state.q);
 }
 
@@ -182,7 +198,7 @@ function render() {
   $("#items").innerHTML = found.slice(0, state.shown).map((i) => {
     const src = imgSrc(cat, i);
     const summary = (i.stats || []).slice(0, 4).join(", ");
-    return `<button class="slot" data-id="${i.id}">${src ? `<img src="${src}" alt="" loading="lazy" decoding="async">` : ""}<span>${isFav(i) ? "\u2605 " : ""}${esc(i.name)}</span><em>${esc(summary)}</em></button>`;
+    return `<button class="slot" data-id="${i.id}">${src ? `<img src="${src}" alt="" loading="lazy" decoding="async">` : ""}<span>${isFav(i) ? "\u2605 " : ""}${esc(i.name)}</span><em>${esc(summary)}</em>${i.dyes?.length ? `<small class="dyes">${dyeChips(i)}</small>` : ""}</button>`;
   }).join("");
   $("#more").hidden = found.length <= state.shown;
 }
@@ -198,6 +214,7 @@ function detail(item) {
   if (item.base_def != null) stats.unshift(`<li>Base DEF: ${item.base_def}</li>`);
   $("#dlg-body").innerHTML = `
     <div class="head">${src ? `<img src="${src}" alt="">` : ""}<div><h2>${esc(item.name)}</h2>${(item.obtain_types || []).map((t) => `<span class="badge">${esc(t)}</span>`).join("")}</div></div>
+    ${item.dyes?.length ? `<h3>Dyes</h3><div class="dyes">${dyeChips(item)}</div>` : ""}
     ${stats.length ? `<h3>Stats</h3>${list(stats)}` : ""}
     ${mats.length || pts.length ? `<h3>Recipe</h3>${list(mats.concat(pts))}` : ""}
     ${item.obtained_from?.text ? `<h3>Obtained from</h3><p>${esc(item.obtained_from.text)}</p>` : ""}`;

@@ -3,19 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Gear archive</title>
+<title>Codex Arcane</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;700&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;700&family=Cinzel+Decorative:wght@700&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="assets/favicon.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="top">
-  <div class="titlebar"><a class="brand" href="index.html"><img src="assets/logo.png" alt="Home" width="64" height="58"></a><h1>Gear archive</h1></div>
+  <div class="titlebar"><a class="brand" href="index.html"><img src="assets/logo.png" alt="Home" width="64" height="58"></a><h1 class="wordmark">Codex Arcane</h1></div>
   <div id="acct"></div>
   <nav id="groups" aria-label="Groups"></nav>
-  <nav id="tabs" aria-label="Categories"></nav>
+  <nav id="tabs" aria-label="Categories" hidden></nav>
 </header>
 <div id="banner" hidden>
   <span>You're browsing as a guest. Your favorites and settings are saved only in this browser. <a href="account.html?next=index.html">Create an account</a> to keep them on any device.</span>
@@ -23,7 +23,7 @@
 </div>
 
 <main>
-  <div class="tools">
+  <div class="tools" hidden>
     <input id="q" type="search" placeholder="Search name, stat, or source" aria-label="Search items">
     <select id="type" aria-label="Filter by how it's obtained"></select>
     <label class="chk"><input type="checkbox" id="favonly"> Favorites only</label>
@@ -39,7 +39,6 @@
 
 <dialog id="dlg"><div id="dlg-body"></div><form method="dialog"><button>Close</button></form></dialog>
 
-<footer>Item data collected from RaffyDB.</footer>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>
 <script src="app.js"></script>

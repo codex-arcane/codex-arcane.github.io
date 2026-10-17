@@ -173,8 +173,9 @@ $("#favonly").onchange = (e) => { state.favOnly = prefs.favOnly = e.target.check
 
 // Account area. Signing in is optional: guests just see a reminder.
 function showAccount() {
+  const owner = !!user && user.email === `${CFG.ownerUsername}@${CFG.emailDomain}`.toLowerCase();
   $("#acct").innerHTML = user
-    ? `<span>${esc(user.email.split("@")[0])}</span> <button id="out">Sign out</button>`
+    ? `${owner ? '<a href="admin.html">Owner panel</a> ' : ""}<span>${esc(user.email.split("@")[0])}</span> <button id="out">Sign out</button>`
     : remote ? `<a href="account.html?next=index.html">Sign in</a>` : "";
   let dismissed = false;
   try { dismissed = localStorage.getItem("gear-banner") === "1"; } catch {}

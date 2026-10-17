@@ -6,12 +6,13 @@
 <title>Account</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;700&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="assets/favicon.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="top">
-  <h1>Account</h1>
+  <div class="titlebar"><a class="brand" href="index.html"><img src="assets/logo.png" alt="Home" width="64" height="58"></a><h1>Account</h1></div>
   <nav id="tabs" aria-label="Account mode">
     <button id="t-in" aria-current="true">Sign in</button>
     <button id="t-up">Create account</button>
@@ -46,5 +47,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>
 <script src="account.js"></script>
+<script src="ui.js"></script>
 </body>
 </html>

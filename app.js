@@ -128,8 +128,6 @@ function renderMenu() {
 }
 
 function openMenu() {
-  if (state.group) openGroups.add(state.group.id);
-  if (state.groups.length === 1) openGroups.add(state.groups[0].id);
   renderMenu();
   drawer.classList.add("open");
   $("#scrim").hidden = false;
@@ -139,6 +137,7 @@ function openMenu() {
 }
 function closeMenu(returnFocus = true) {
   if (!drawer.classList.contains("open")) return;
+  openGroups.clear();  // every group starts closed the next time the menu opens
   drawer.classList.remove("open");
   $("#scrim").hidden = true;
   document.body.classList.remove("menu-open");
@@ -191,7 +190,6 @@ async function pick(id) {
   prefs.cat = cat.id; savePrefs();
   location.hash = cat.id;
   state.group = state.groups.find((g) => g.cats.includes(cat));
-  if (state.group) openGroups.add(state.group.id);
   updateCrumb();
   if (!state.cache[cat.id]) {
     const lists = await Promise.all(cat.files.map((f) => fetch(f).then((r) => r.json())));

@@ -17,6 +17,7 @@ function start() {
   const isOwner = (u) => u?.email === `${cfg.ownerUsername}@${cfg.emailDomain}`.toLowerCase();
   let structure = { groups: [] };   // saved as config/structure.json: groups -> categories
   let files = [];                    // category ids that have a data/<id>.json
+  const open = new Set();            // groups currently expanded (all start collapsed)
 
   sb.auth.onAuthStateChange((_event, session) => {
     const user = session?.user;
@@ -61,15 +62,19 @@ function start() {
     const opts = (sel) => structure.groups.map((g) => `<option value="${esc(g.id)}"${g.id === sel ? " selected" : ""}>${esc(g.name)}</option>`).join("");
     $("#tree").innerHTML = structure.groups.length
       ? structure.groups.map((g) => `
-        <div class="grp-head"><h3>${esc(g.name)}</h3>
+        <div class="grp">
+        <div class="grp-head">
+          <button type="button" class="grp-toggle" data-act="toggle" data-g="${esc(g.id)}" aria-expanded="${open.has(g.id)}">
+            <svg class="chev" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>${esc(g.name)}</span><small>${g.categories.length} ${g.categories.length === 1 ? "category" : "categories"}</small></button>
           <span><button data-act="ren-group" data-g="${esc(g.id)}">Rename</button> <button data-act="del-group" data-g="${esc(g.id)}" class="danger">Delete</button></span></div>
-        <ul class="rows">${g.categories.length ? g.categories.map((c) => `
+        <ul class="rows"${open.has(g.id) ? "" : " hidden"}>${g.categories.length ? g.categories.map((c) => `
           <li data-cat="${esc(c.id)}"><span><strong>${esc(c.name)}</strong></span>
             <span><select data-move="${esc(c.id)}" aria-label="Move ${esc(c.name)} to group">${opts(g.id)}</select>
             <button data-act="ren-cat" data-id="${esc(c.id)}">Rename</button>
             <button data-act="replace" data-id="${esc(c.id)}">Replace JSON</button>
             <button data-act="del-cat" data-id="${esc(c.id)}" class="danger">Delete</button></span></li>`).join("")
-          : `<li class="muted">No categories in this group yet.</li>`}</ul>`).join("")
+          : `<li class="muted">No categories in this group yet.</li>`}</ul></div>`).join("")
       : `<p class="muted">No groups yet. Add your first group below, for example Equipment.</p>`;
     $("#newgroup").innerHTML = opts($("#newgroup").value);
   }
@@ -90,10 +95,15 @@ function start() {
   }
 
   $("#tree").onclick = async (e) => {
-    const { act, g: gid, id } = e.target.dataset;
-    if (!act) return;
+    const el = e.target.closest("[data-act]");
+    if (!el) return;
+    const { act, g: gid, id } = el.dataset;
     const grp = structure.groups.find((x) => x.id === gid);
-    if (act === "ren-group") {
+    if (act === "toggle") {
+      open.has(gid) ? open.delete(gid) : open.add(gid);
+      render();
+      $("#tree").querySelector(`.grp-toggle[data-g="${CSS.escape(gid)}"]`)?.focus();
+    } else if (act === "ren-group") {
       const name = prompt("New group name:", grp.name)?.trim();
       if (name) { grp.name = name; saveStructure(`Group renamed to ${name}.`); }
     } else if (act === "del-group") {
@@ -128,8 +138,12 @@ function start() {
     const to = structure.groups.find((x) => x.id === e.target.value);
     g.categories = g.categories.filter((x) => x !== c);
     to.categories.push(c);
+    open.add(to.id);
     saveStructure(`${c.name} moved to ${to.name}.`);
   };
+
+  $("#expand-all").onclick = () => { structure.groups.forEach((g) => open.add(g.id)); render(); };
+  $("#collapse-all").onclick = () => { open.clear(); render(); };
 
   $("#gbtn").onclick = () => {
     const name = $("#gname").value.trim(), id = slug(name);
@@ -154,6 +168,7 @@ function start() {
     if (!n) return;
     const grp = structure.groups.find((g) => g.id === $("#newgroup").value) || structure.groups[0];
     grp.categories.push({ id, name });
+    open.add(grp.id);
     $("#newname").value = "";
     saveStructure(`Saved ${n} items to ${name} in ${grp.name}.`);
   };
@@ -252,6 +267,7 @@ function start() {
         if (!findCat(id)) {
           const grp = structure.groups.find((g) => g.id === $("#newgroup").value) || structure.groups[0];
           grp.categories.push({ id, name });
+          open.add(grp.id);
           $("#newname").value = "";
           await saveStructure();
         }

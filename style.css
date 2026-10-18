@@ -219,3 +219,4 @@ body.menu-open { overflow: hidden; }
   .top-actions { order: 1; }
   .titlebar .page-label { order: 2; flex-basis: 100%; margin: 0; padding: 0; border-left: 0; }
 }
+.rows[hidden] { display: none; }

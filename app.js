@@ -9,11 +9,11 @@ const prefs = (() => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.ge
 state.view = prefs.view; state.favOnly = prefs.favOnly;
 const sb = remote && window.supabase ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey) : null;
 let user = null, saveTimer, syncedFor = null;
-const favKey = (i) => `${state.cat.id}:${i.id}`;
-const isFav = (i) => prefs.favs.includes(favKey(i));
-function toggleFav(i) {
-  const k = favKey(i);
-  prefs.favs = isFav(i) ? prefs.favs.filter((x) => x !== k) : [...prefs.favs, k];
+const favKey = (i, cat = state.cat) => `${cat.id}:${i.id}`;
+const isFav = (i, cat = state.cat) => prefs.favs.includes(favKey(i, cat));
+function toggleFav(i, cat = state.cat) {
+  const k = favKey(i, cat);
+  prefs.favs = isFav(i, cat) ? prefs.favs.filter((x) => x !== k) : [...prefs.favs, k];
   savePrefs();
 }
 function savePrefs() {
@@ -102,47 +102,86 @@ async function boot() {
   if (!state.cats.length) return empty(remote
     ? "No categories yet. Sign in at admin.html and upload a JSON file."
     : "No categories yet. Add a folder with a .json file inside data/ and rebuild the manifest.");
-  $("#tabs").onclick = (e) => { const b = e.target.closest("button"); if (b) pick(b.dataset.id); };
-  $("#groups").onclick = (e) => { const b = e.target.closest("button"); if (b) pickGroup(b.dataset.g); };
+  renderMenu();
   const start = state.cats.find((c) => c.id === location.hash.slice(1));
   start ? pick(start.id) : showHome();
 }
 
-// Two rows of tabs: groups (like Equipment) on top, the categories inside the open group below.
-function renderTabs() {
-  const g = state.group;
-  $("#groups").hidden = !remote;
-  $("#groups").innerHTML = state.groups
-    .map((x) => `<button data-g="${esc(x.id)}" aria-current="${x === g}">${esc(x.name)}</button>`)
-    .join("");
-  $("#tabs").hidden = !g;
-  $("#tabs").innerHTML = (g ? g.cats : [])
-    .map((c) => `<button data-id="${esc(c.id)}" aria-current="${c === state.cat}">${esc(c.name)}<small>${c.count}</small></button>`)
-    .join("");
+// Menu: the 3-line button opens a vertical list. Groups (like Equipment) expand to show their categories.
+const openGroups = new Set();
+const menuBtn = $("#menu-btn"), drawer = $("#drawer");
+
+function renderMenu() {
+  $("#menu-list").innerHTML = state.groups.map((g) => {
+    const open = openGroups.has(g.id);
+    const total = g.cats.reduce((n, c) => n + c.count, 0);
+    return `<div class="dg">
+      <button class="dg-head" type="button" data-g="${esc(g.id)}" aria-expanded="${open}">
+        <svg class="chev" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="dg-name">${esc(g.name)}</span><small>${total}</small>
+      </button>
+      <ul class="dg-list"${open ? "" : " hidden"}>${g.cats.length
+        ? g.cats.map((c) => `<li><button type="button" data-id="${esc(c.id)}" aria-current="${c === state.cat}">${esc(c.name)}<small>${c.count}</small></button></li>`).join("")
+        : `<li class="muted dg-empty">No categories in this group yet.</li>`}</ul>
+    </div>`;
+  }).join("");
 }
 
-// Nothing is open at first: categories stay hidden until their group is pressed.
+function openMenu() {
+  if (state.group) openGroups.add(state.group.id);
+  if (state.groups.length === 1) openGroups.add(state.groups[0].id);
+  renderMenu();
+  drawer.classList.add("open");
+  $("#scrim").hidden = false;
+  document.body.classList.add("menu-open");
+  menuBtn.setAttribute("aria-expanded", "true");
+  $("#menu-close").focus();
+}
+function closeMenu(returnFocus = true) {
+  if (!drawer.classList.contains("open")) return;
+  drawer.classList.remove("open");
+  $("#scrim").hidden = true;
+  document.body.classList.remove("menu-open");
+  menuBtn.setAttribute("aria-expanded", "false");
+  if (returnFocus) menuBtn.focus();
+}
+menuBtn.onclick = () => (drawer.classList.contains("open") ? closeMenu() : openMenu());
+$("#menu-close").onclick = () => closeMenu();
+$("#scrim").onclick = () => closeMenu();
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+$("#menu-list").onclick = (e) => {
+  const head = e.target.closest(".dg-head");
+  if (head) {  // press a group to expand or collapse its categories
+    const id = head.dataset.g, open = head.getAttribute("aria-expanded") !== "true";
+    open ? openGroups.add(id) : openGroups.delete(id);
+    head.setAttribute("aria-expanded", open);
+    head.nextElementSibling.hidden = !open;
+    return;
+  }
+  const b = e.target.closest("button[data-id]");
+  if (b) { closeMenu(false); pick(b.dataset.id); }
+};
+
+function updateCrumb() {
+  const c = $("#crumb");
+  c.hidden = !state.cat;
+  if (!state.cat) return;
+  const g = state.group;
+  c.textContent = remote && g ? `${g.name} \u203A ${state.cat.name}` : state.cat.name;
+}
+
+// Nothing is open at first: categories stay hidden until a category is chosen from the menu.
 function closeCategory(text) {
   state.cat = null; state.items = [];
   $(".tools").hidden = true;
   $("#more").hidden = true;
+  updateCrumb();
   empty(text);
 }
 
 function showHome() {
-  state.group = remote ? null : state.groups[0];
-  renderTabs();
-  closeCategory(remote ? "Choose a group above to see its categories." : "Choose a category above.");
-}
-
-function pickGroup(gid) {
-  const g = state.groups.find((x) => x.id === gid);
-  if (!g) return;
-  history.replaceState(null, "", location.pathname + location.search);
-  if (state.group === g) return showHome();  // pressing the open group again hides its categories
-  state.group = g;
-  renderTabs();
-  closeCategory(g.cats.length ? `Choose a category in ${g.name}.` : "No categories in this group yet.");
+  state.group = null;
+  closeCategory("Open the menu at the top left to browse categories, or use the search bar to find anything on the site.");
 }
 
 async function pick(id) {
@@ -152,7 +191,8 @@ async function pick(id) {
   prefs.cat = cat.id; savePrefs();
   location.hash = cat.id;
   state.group = state.groups.find((g) => g.cats.includes(cat));
-  renderTabs();
+  if (state.group) openGroups.add(state.group.id);
+  updateCrumb();
   if (!state.cache[cat.id]) {
     const lists = await Promise.all(cat.files.map((f) => fetch(f).then((r) => r.json())));
     state.cache[cat.id] = lists.flat().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
@@ -203,8 +243,8 @@ function render() {
   $("#more").hidden = found.length <= state.shown;
 }
 
-function detail(item) {
-  const cat = state.cat, r = item.recipe || {};
+function detail(item, cat = state.cat) {
+  const r = item.recipe || {};
   const src = imgSrc(cat, item);
   const list = (arr) => (arr.length ? `<ul>${arr.join("")}</ul>` : "");
   const mats = (r.materials || []).map((m) => `<li>${esc(m.name)}${m.quantity ? ` x${m.quantity}` : ""}</li>`);
@@ -220,9 +260,9 @@ function detail(item) {
     ${item.obtained_from?.text ? `<h3>Obtained from</h3><p>${esc(item.obtained_from.text)}</p>` : ""}`;
   const fb = document.createElement("button");
   fb.type = "button"; fb.className = "fav";
-  const label = () => (fb.textContent = isFav(item) ? "Remove from favorites" : "Add to favorites");
+  const label = () => (fb.textContent = isFav(item, cat) ? "Remove from favorites" : "Add to favorites");
   label();
-  fb.onclick = () => { toggleFav(item); label(); render(); };
+  fb.onclick = () => { toggleFav(item, cat); label(); if (state.cat) render(); };
   $("#dlg-body").append(fb);
   $("#dlg").showModal();
 }
@@ -243,6 +283,86 @@ for (const v of ["grid", "list"]) {
   };
 }
 $("#favonly").onchange = (e) => { state.favOnly = prefs.favOnly = e.target.checked; savePrefs(); state.shown = PAGE; if (state.cat) render(); };
+
+// Search the whole site: category names plus every item in every category.
+let allLoaded = null;
+function loadAll() {  // with Supabase everything is already loaded; locally the other categories are fetched on first search
+  return (allLoaded ||= Promise.all(state.cats.filter((c) => !state.cache[c.id]).map(async (c) => {
+    const lists = await Promise.all(c.files.map((f) => fetch(f).then((r) => r.json())));
+    state.cache[c.id] = lists.flat().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  })).catch(() => { allLoaded = null; }));
+}
+const hayCache = new WeakMap();
+function deepHay(i) {
+  let h = hayCache.get(i);
+  if (h === undefined) {
+    h = [i.name, ...(i.stats || []), ...(i.obtain_types || []), i.obtained_from?.text,
+      ...(i.dyes || []).map((d) => (typeof d === "string" ? d : d.code)),
+      ...((i.recipe?.materials) || []).map((m) => m.name)].join(" ").toLowerCase();
+    hayCache.set(i, h);
+  }
+  return h;
+}
+const GS_MAX = 50;
+let gsTimer, gsHits = [];
+function globalSearch(text) {
+  const terms = text.toLowerCase().split(/\s+/).filter(Boolean);
+  const out = { places: [], items: [], total: 0 };
+  if (!terms.length) return out;
+  const all = (h) => terms.every((t) => h.includes(t));
+  for (const g of state.groups) {
+    if (remote && all(g.name.toLowerCase())) out.places.push({ kind: "group", g });
+    for (const c of g.cats) if (all(`${c.name} ${remote ? g.name : ""}`.toLowerCase())) out.places.push({ kind: "cat", c, g });
+  }
+  const scored = [];
+  for (const g of state.groups) for (const c of g.cats) for (const i of state.cache[c.id] || []) {
+    if (!all(deepHay(i))) continue;
+    const n = (i.name || "").toLowerCase();
+    scored.push({ i, c, g, score: n === terms.join(" ") ? 0 : n.startsWith(terms[0]) ? 1 : n.includes(terms[0]) ? 2 : 3 });
+  }
+  scored.sort((a, b) => a.score - b.score);
+  out.total = scored.length;
+  out.items = scored.slice(0, GS_MAX);
+  return out;
+}
+function renderGlobal() {
+  const box = $("#gs-results"), text = $("#gs").value.trim();
+  if (!text) { box.hidden = true; box.innerHTML = ""; return; }
+  const res = globalSearch(text);
+  gsHits = [...res.places, ...res.items];
+  const row = (n, thumb, title, sub) => `<button type="button" role="option" class="gs-row" data-n="${n}">${thumb}<span class="gs-t"><strong>${esc(title)}</strong><small>${esc(sub)}</small></span></button>`;
+  const places = res.places.map((p, n) => p.kind === "group"
+    ? row(n, '<span class="gs-ph" aria-hidden="true">\u2630</span>', p.g.name, "Group \u2022 open in menu")
+    : row(n, '<span class="gs-ph" aria-hidden="true">\u2630</span>', p.c.name, `Category${remote ? ` \u2022 ${p.g.name}` : ""}`));
+  const items = res.items.map((h, k) => {
+    const src = imgSrc(h.c, h.i);
+    return row(res.places.length + k, src ? `<img src="${src}" alt="" loading="lazy" decoding="async">` : '<span class="gs-ph"></span>', h.i.name, `${h.c.name}${remote ? ` \u2022 ${h.g.name}` : ""}`);
+  });
+  const note = res.total > GS_MAX ? `<p class="gs-note">Showing the first ${GS_MAX} of ${res.total} items. Type more to narrow it down.</p>` : "";
+  box.innerHTML = gsHits.length ? places.join("") + items.join("") + note : `<p class="gs-note">Nothing found for \u201C${esc(text)}\u201D.</p>`;
+  box.hidden = false;
+}
+async function openHit(n) {
+  const h = gsHits[n];
+  if (!h) return;
+  $("#gs-results").hidden = true;
+  $("#gs").blur();
+  if (h.kind === "group") { openGroups.add(h.g.id); return openMenu(); }
+  if (h.kind === "cat") return pick(h.c.id);
+  await pick(h.c.id);
+  detail(h.i, h.c);
+}
+$("#gs").oninput = () => {
+  clearTimeout(gsTimer);
+  gsTimer = setTimeout(async () => { await loadAll(); renderGlobal(); }, 120);
+};
+$("#gs").onfocus = () => { if ($("#gs").value.trim()) renderGlobal(); else loadAll(); };
+$("#gs").onkeydown = (e) => {
+  if (e.key === "Enter") { e.preventDefault(); clearTimeout(gsTimer); loadAll().then(() => { renderGlobal(); openHit(0); }); }
+  if (e.key === "Escape") { $("#gs-results").hidden = true; }
+};
+$("#gs-results").onclick = (e) => { const b = e.target.closest(".gs-row"); if (b) openHit(Number(b.dataset.n)); };
+document.addEventListener("click", (e) => { if (!e.target.closest(".gsearch")) $("#gs-results").hidden = true; });
 
 // Account area. Signing in is optional: guests just see a reminder.
 function showAccount() {

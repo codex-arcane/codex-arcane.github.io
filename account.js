@@ -13,6 +13,24 @@ if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
   start();
 }
 
+// Eye button on each password box: press to see what you typed, press again to hide it.
+const EYE = '<svg class="on" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></svg><svg class="off" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10.5 10.5 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.6 6.7C3.9 8.5 2 12 2 12s3.6 7 10 7c1.6 0 3-.4 4.3-1M9.9 9.9a3 3 0 0 0 4.2 4.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+document.querySelectorAll(".pw").forEach((wrap) => {
+  const input = wrap.querySelector("input");
+  const btn = document.createElement("button");
+  btn.type = "button"; btn.className = "eye"; btn.innerHTML = EYE;
+  btn.setAttribute("aria-pressed", "false");
+  btn.setAttribute("aria-label", "Show password");
+  btn.onclick = () => {
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    btn.setAttribute("aria-pressed", show);
+    btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+    input.focus();
+  };
+  wrap.append(btn);
+});
+
 function start() {
   const sb = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
   const next = new URLSearchParams(location.search).get("next");

@@ -64,7 +64,7 @@ function start() {
         <div class="grp-head"><h3>${esc(g.name)}</h3>
           <span><button data-act="ren-group" data-g="${esc(g.id)}">Rename</button> <button data-act="del-group" data-g="${esc(g.id)}" class="danger">Delete</button></span></div>
         <ul class="rows">${g.categories.length ? g.categories.map((c) => `
-          <li><span><strong>${esc(c.name)}</strong></span>
+          <li data-cat="${esc(c.id)}"><span><strong>${esc(c.name)}</strong></span>
             <span><select data-move="${esc(c.id)}" aria-label="Move ${esc(c.name)} to group">${opts(g.id)}</select>
             <button data-act="ren-cat" data-id="${esc(c.id)}">Rename</button>
             <button data-act="replace" data-id="${esc(c.id)}">Replace JSON</button>
@@ -158,11 +158,10 @@ function start() {
     saveStructure(`Saved ${n} items to ${name} in ${grp.name}.`);
   };
 
-  // Images: one folder for all categories
-  $("#imgbtn").onclick = () => $("#imgfile").click();
-  $("#imgfile").onchange = async (e) => {
-    const list = [...e.target.files].filter((f) => /\.(webp|png|jpe?g|gif|svg)$/i.test(f.name));
-    if (!list.length) return msg("No images found in that folder.");
+  // ---- Images: one folder for all categories ----
+  const isImage = (f) => /\.(webp|png|jpe?g|gif|svg)$/i.test(f.name);
+
+  async function uploadImages(list) {
     let done = 0, failed = 0, next = 0;
     const worker = async () => {
       while (next < list.length) {
@@ -173,7 +172,129 @@ function start() {
       }
     };
     await Promise.all([worker(), worker(), worker(), worker()]);
-    msg(`Images done: ${done} uploaded${failed ? `, ${failed} failed. Choose the folder again to retry.` : "."}`);
+    return { done, failed };
+  }
+
+  $("#imgbtn").onclick = () => $("#imgfile").click();
+  $("#imgfile").onchange = async (e) => {
+    const list = [...e.target.files].filter(isImage);
     e.target.value = "";
+    if (!list.length) return msg("No images found in that folder.");
+    const { done, failed } = await uploadImages(list);
+    msg(`Images done: ${done} uploaded${failed ? `, ${failed} failed. Choose the folder again to retry.` : "."}`);
   };
+
+  // ---- Drag and drop: JSON files and images (single files or whole folders) ----
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  const rowOf = (e) => e.target.closest?.("li[data-cat]");
+  let depth = 0, busy = false;
+
+  function endDrag() {
+    depth = 0;
+    document.body.classList.remove("dragging");
+    document.querySelectorAll(".drop-row").forEach((el) => el.classList.remove("drop-row"));
+  }
+
+  // Reads everything that was dropped, including the contents of dropped folders.
+  // The scraper's "cache" folder is skipped because the site doesn't need it.
+  async function filesFromDrop(dt) {
+    const fallback = [...dt.files];   // collected right away: the drop data is only valid during the event
+    const entries = [...dt.items].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+    if (!entries.length) return fallback;
+    const out = [];
+    const walk = async (entry) => {
+      if (entry.isFile) {
+        out.push(await new Promise((ok, fail) => entry.file(ok, fail)));
+      } else if (entry.isDirectory && entry.name !== "cache") {
+        const reader = entry.createReader();
+        for (;;) {
+          const batch = await new Promise((ok, fail) => reader.readEntries(ok, fail));
+          if (!batch.length) break;
+          for (const child of batch) await walk(child);
+        }
+      }
+    };
+    for (const entry of entries) await walk(entry);
+    return out;
+  }
+
+  async function handleDrop(dt, rowId) {
+    if (busy) return msg("Still uploading the last drop. Wait for it to finish, then drop again.");
+    busy = true;
+    try {
+      msg("Reading dropped files...");
+      const dropped = await filesFromDrop(dt);
+      const jsons = dropped.filter((f) => /\.json$/i.test(f.name));
+      const images = dropped.filter(isImage);
+      if (!jsons.length && !images.length) return msg("Nothing to upload. Drop .json files or images (or a folder that has them).");
+      const report = [];
+
+      for (const file of jsons) {
+        let id, name, replacing = false;
+        if (rowId && jsons.length === 1) {            // dropped on a category row: replace that category
+          id = rowId;
+          name = findCat(id)?.c.name || pretty(id);
+          replacing = true;
+        } else {                                       // new category, named after the file (or the name box if filled in)
+          name = (jsons.length === 1 && $("#newname").value.trim()) || pretty(file.name.replace(/\.json$/i, ""));
+          id = slug(name);
+          if (!id) { report.push(`Skipped ${file.name}: couldn't make a category name from it.`); continue; }
+          if (files.includes(id)) {
+            if (!confirm(`${name} already exists. Replace its items with ${file.name}?`)) { report.push(`Skipped ${file.name}.`); continue; }
+            replacing = true;
+          } else if (!structure.groups.length) {
+            report.push(`Skipped ${file.name}: add a group first, for example Equipment.`);
+            continue;
+          }
+        }
+        const n = await uploadJson(id, file);
+        if (n === false) { report.push(`${file.name}: ${$("#msg").textContent}`); continue; }
+        if (!findCat(id)) {
+          const grp = structure.groups.find((g) => g.id === $("#newgroup").value) || structure.groups[0];
+          grp.categories.push({ id, name });
+          $("#newname").value = "";
+          await saveStructure();
+        }
+        report.push(`${replacing ? "Replaced" : "Added"} ${name} (${n} items).`);
+      }
+
+      if (images.length) {
+        const { done, failed } = await uploadImages(images);
+        report.push(`Images: ${done} uploaded${failed ? `, ${failed} failed (drop them again to retry)` : ""}.`);
+      }
+      const ignored = dropped.length - jsons.length - images.length;
+      if (ignored > 0) report.push(`Ignored ${ignored} other file${ignored > 1 ? "s" : ""}.`);
+      msg(report.join(" "));
+    } catch (err) {
+      msg(`Something went wrong: ${err.message || err}`);
+    } finally {
+      busy = false;
+    }
+  }
+
+  window.addEventListener("dragenter", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth++;
+    document.body.classList.add("dragging");
+  });
+  window.addEventListener("dragover", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    const row = rowOf(e);
+    document.querySelectorAll(".drop-row").forEach((el) => el !== row && el.classList.remove("drop-row"));
+    row?.classList.add("drop-row");
+  });
+  window.addEventListener("dragleave", (e) => {
+    if (hasFiles(e) && --depth <= 0) endDrag();
+  });
+  window.addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();                 // stops the browser from opening the file instead
+    const row = rowOf(e);
+    endDrag();
+    if ($("#panel").hidden) return;
+    handleDrop(e.dataTransfer, row?.dataset.cat);
+  });
 }

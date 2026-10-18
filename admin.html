@@ -13,7 +13,7 @@
 </head>
 <body>
 <header class="top">
-  <div class="titlebar"><a class="brand" href="index.html"><img src="assets/logo.png" alt="Home" width="64" height="58"></a><h1 class="wordmark">Codex Arcane</h1><span class="page-label">Owner panel</span></div>
+  <div class="titlebar"><a class="brand" href="index.html"><img src="assets/logo.png" alt="Home" width="64" height="58"></a><h1 class="wordmark">Codex Arcane</h1><span class="page-label">Owner panel</span><div class="top-actions"><a class="btn" href="index.html">View site</a></div></div>
   <p id="who" class="muted"></p>
 </header>
 
@@ -33,7 +33,8 @@
 
     <section>
       <h2>Groups and categories</h2>
-      <p class="muted">Groups (like Equipment) appear as the top tabs. Categories sit inside a group.</p>
+      <p class="muted">Groups (like Equipment) are the top level of the site menu. Press a group to open or close its categories.</p>
+      <div class="tree-tools"><button id="expand-all" type="button">Expand all</button><button id="collapse-all" type="button">Collapse all</button></div>
       <div id="tree"></div>
 
       <h3>Add a group</h3>
@@ -58,7 +59,7 @@
       <input id="imgfile" type="file" webkitdirectory multiple hidden>
     </section>
 
-    <p><button class="signout">Sign out</button> <a href="index.html" class="muted">View site</a></p>
+    <p><button class="signout">Sign out</button></p>
   </div>
 </main>
 <div id="dropbanner" role="status">Drop to upload. Drop one JSON on a category to replace it.</div>

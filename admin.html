@@ -26,6 +26,11 @@
   </section>
 
   <div id="panel" hidden>
+    <section id="dropzone" class="dropzone" aria-label="Drag and drop upload">
+      <strong>Drag and drop</strong>
+      <p class="muted">Drop a <code>.json</code> file anywhere on this page to add it as a new category, named after the file. Drop it on a category below to replace that one. Drop image files, or a whole folder, to upload images. You can drop JSON and images together. The buttons below still work too.</p>
+    </section>
+
     <section>
       <h2>Groups and categories</h2>
       <p class="muted">Groups (like Equipment) appear as the top tabs. Categories sit inside a group.</p>
@@ -56,6 +61,7 @@
     <p><button class="signout">Sign out</button> <a href="index.html" class="muted">View site</a></p>
   </div>
 </main>
+<div id="dropbanner" role="status">Drop to upload. Drop one JSON on a category to replace it.</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>

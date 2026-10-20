@@ -35,12 +35,23 @@
 
     <button id="submit" class="primary">Sign in</button>
     <p id="msg" class="muted" role="status"></p>
+    <p id="forgot" class="muted">Forgot your password? Accounts here don't use a real email, so the site owner has to reset it for you.</p>
   </form>
 
   <section id="done" hidden>
     <p id="who"></p>
     <p><a id="adminlink" href="admin.html" hidden>Open owner panel</a></p>
     <button id="signout">Sign out</button> <a href="index.html" class="muted">View site</a>
+
+    <form id="pwform" class="pw-form" autocomplete="off">
+      <h2>Change password</h2>
+      <label for="np">New password</label>
+      <div class="pw"><input id="np" type="password" autocomplete="new-password" required minlength="8"></div>
+      <label for="np2">Repeat new password</label>
+      <div class="pw"><input id="np2" type="password" autocomplete="new-password" required minlength="8"></div>
+      <button class="primary">Change password</button>
+      <p id="pwmsg" class="muted" role="status"></p>
+    </form>
   </section>
 </main>
 

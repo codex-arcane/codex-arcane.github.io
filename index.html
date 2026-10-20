@@ -73,10 +73,14 @@
           <option value="lo">Lowest stat value</option>
         </select>
       </label>
-      <div class="statpick">
-        <input id="stat-q" type="text" placeholder="Search stats (any stat)" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="stat-list" aria-label="Filter by stat">
-        <button id="stat-clear" class="stat-clear" type="button" aria-label="Clear stat" hidden>&times;</button>
-        <div id="stat-list" role="listbox" aria-label="Stats" hidden></div>
+      <div class="statfield"><span>Stat</span>
+        <div class="statpick">
+          <button id="stat-btn" class="stat-btn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="stat-pop"><span id="stat-label">Any stat</span></button>
+          <div id="stat-pop" class="stat-pop" hidden>
+            <input id="stat-q" type="search" placeholder="Search stats" autocomplete="off" aria-label="Search stats">
+            <div id="stat-list" role="listbox" aria-label="Stats"></div>
+          </div>
+        </div>
       </div>
       <label class="dyef">Dye <input id="dye" list="dye-list" placeholder="e.g. A30" autocomplete="off"></label>
       <datalist id="dye-list"></datalist>

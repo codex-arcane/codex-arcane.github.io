@@ -83,10 +83,46 @@ function start() {
     for (const g of structure.groups) { const c = g.categories.find((x) => x.id === id); if (c) return { g, c }; }
   };
 
+  // Shows what is about to be uploaded and warns about common problems before anything is replaced.
+  async function confirmPreview(id, items, file) {
+    const dlg = $("#preview");
+    const name = findCat(id)?.c.name || pretty(id);
+    const replacing = files.includes(id);
+    let before = null;
+    if (replacing) {
+      try { const dl = await store.download(`data/${id}.json`); if (!dl.error) before = JSON.parse(await dl.data.text()).length; } catch {}
+    }
+    const rows = items.filter((i) => i && typeof i === "object");
+    const noName = items.length - rows.filter((i) => String(i.name ?? "").trim()).length;
+    const noId = items.length - rows.filter((i) => i.id != null).length;
+    const ids = rows.map((i) => i.id).filter((x) => x != null).map(String);
+    const dupes = ids.length - new Set(ids).size;
+    const warn = [];
+    if (!items.length) warn.push("This file has no items, so there is nothing to upload.");
+    if (noName) warn.push(`${noName} item${noName > 1 ? "s have" : " has"} no name.`);
+    if (noId) warn.push(`${noId} item${noId > 1 ? "s have" : " has"} no id, so favorites and links won't work for ${noId > 1 ? "them" : "it"}.`);
+    if (dupes) warn.push(`${dupes} item${dupes > 1 ? "s share" : " shares"} an id with another item.`);
+    if (before && items.length < before * 0.5) warn.push(`The current category has ${before} items. This file has far fewer.`);
+    const sample = rows.slice(0, 5).map((i) => `<li>${esc(i.name ?? "(no name)")}</li>`).join("");
+    $("#preview-body").innerHTML = `<h2>${replacing ? "Replace" : "Add"} ${esc(name)}?</h2>
+      <p><strong>${items.length}</strong> item${items.length === 1 ? "" : "s"} in <code>${esc(file.name)}</code>${before != null ? `, replacing the current <strong>${before}</strong>` : ""}.</p>
+      ${warn.map((w) => `<p class="warn">${esc(w)}</p>`).join("")}
+      ${sample ? `<p class="muted">First items:</p><ul>${sample}</ul>` : ""}`;
+    $("#pv-go").disabled = !items.length;
+    return new Promise((resolve) => {
+      dlg.addEventListener("close", () => resolve(dlg.returnValue === "go"), { once: true });
+      $("#pv-go").onclick = () => dlg.close("go");
+      $("#pv-cancel").onclick = () => dlg.close("cancel");
+      dlg.returnValue = "cancel";
+      dlg.showModal();
+    });
+  }
+
   async function uploadJson(id, file) {
     let items;
     try { items = JSON.parse(await file.text()); } catch { msg("That file isn't valid JSON, so nothing was uploaded."); return false; }
     if (!Array.isArray(items)) { msg("Expected a JSON list of items (like additionalgear.json). Nothing was uploaded."); return false; }
+    if (!(await confirmPreview(id, items, file))) { msg("Upload cancelled. Nothing was changed."); return false; }
     msg(`Uploading ${items.length} items...`);
     const { error } = await store.upload(`data/${id}.json`, file, { upsert: true, contentType: "application/json", cacheControl: "60" });
     if (error) { msg(`Upload failed: ${error.message}`); return false; }
@@ -171,6 +207,55 @@ function start() {
     open.add(grp.id);
     $("#newname").value = "";
     saveStructure(`Saved ${n} items to ${name} in ${grp.name}.`);
+  };
+
+  // ---- Backup and restore ----
+  $("#backup").onclick = async () => {
+    if (!files.length) return msg("There are no categories to back up yet.");
+    msg("Collecting your data...");
+    const out = { app: "codex-arcane", version: 1, saved: new Date().toISOString(), structure: { groups: structure.groups.filter((g) => g.id !== "unsorted" || g.categories.length) }, categories: {} };
+    let total = 0;
+    for (const id of files) {
+      const dl = await store.download(`data/${id}.json`);
+      if (dl.error) return msg(`Backup stopped: couldn't read ${pretty(id)} (${dl.error.message}). Nothing was downloaded.`);
+      try { out.categories[id] = JSON.parse(await dl.data.text()); } catch { return msg(`Backup stopped: ${pretty(id)} isn't valid JSON.`); }
+      total += out.categories[id].length;
+      msg(`Collecting... ${Object.keys(out.categories).length}/${files.length}`);
+    }
+    const link = Object.assign(document.createElement("a"), {
+      href: URL.createObjectURL(new Blob([JSON.stringify(out)], { type: "application/json" })),
+      download: `codex-arcane-backup-${new Date().toISOString().slice(0, 10)}.json`,
+    });
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+    msg(`Backup downloaded: ${files.length} categories, ${total} items. Pictures are not included.`);
+  };
+
+  $("#restore").onclick = () => $("#restorefile").click();
+  $("#restorefile").onchange = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    let data;
+    try { data = JSON.parse(await file.text()); } catch { return msg("That file isn't valid JSON. Nothing was restored."); }
+    const ids = data && data.app === "codex-arcane" && data.categories && typeof data.categories === "object" ? Object.keys(data.categories) : null;
+    if (!ids) return msg("That doesn't look like a Codex Arcane backup file. Nothing was restored.");
+    if (ids.some((id) => !/^[A-Za-z0-9_-]+$/.test(id) || !Array.isArray(data.categories[id]))) return msg("The backup file has a category that can't be read. Nothing was restored.");
+    const total = ids.reduce((n, id) => n + data.categories[id].length, 0);
+    const clash = ids.filter((id) => files.includes(id)).length;
+    if (!confirm(`Restore ${ids.length} categories (${total} items) from ${file.name}?${clash ? `\n\n${clash} of them already exist and will be replaced.` : ""}\n\nMake a fresh backup first if you aren't sure.`)) return msg("Restore cancelled. Nothing was changed.");
+    let done = 0;
+    for (const id of ids) {
+      const { error } = await store.upload(`data/${id}.json`, new Blob([JSON.stringify(data.categories[id])], { type: "application/json" }), { upsert: true, contentType: "application/json", cacheControl: "60" });
+      if (error) return msg(`Restore stopped at ${pretty(id)}: ${error.message}. ${done} categories were restored before that.`);
+      msg(`Restoring... ${++done}/${ids.length}`);
+    }
+    if (data.structure && Array.isArray(data.structure.groups)) {
+      const { error } = await store.upload("config/structure.json", new Blob([JSON.stringify(data.structure)], { type: "application/json" }), { upsert: true, contentType: "application/json", cacheControl: "30" });
+      if (error) msg(`Items were restored, but the menu layout wasn't: ${error.message}`);
+    }
+    await load();
+    msg(`Restored ${ids.length} categories (${total} items).`);
   };
 
   // ---- Images: one folder for all categories ----

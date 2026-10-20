@@ -72,7 +72,8 @@ function start() {
           <li data-cat="${esc(c.id)}"><span><strong>${esc(c.name)}</strong></span>
             <span><select data-move="${esc(c.id)}" aria-label="Move ${esc(c.name)} to group">${opts(g.id)}</select>
             <button data-act="ren-cat" data-id="${esc(c.id)}">Rename</button>
-            <button class="dropbtn" data-act="replace" data-drop="cat" data-id="${esc(c.id)}" title="Drop a JSON file here, or press to choose one" aria-label="Replace ${esc(c.name)}: drop a JSON file here or press to choose one">Drop file</button>
+            <button class="dropbtn" data-act="replace" data-drop="cat" data-id="${esc(c.id)}" title="Drop a JSON file here, or press to choose one" aria-label="Replace ${esc(c.name)} items: drop a JSON file here or press to choose one">JSON</button>
+            <button class="dropbtn" data-act="images" data-drop="images" data-id="${esc(c.id)}" title="Drop image files or a folder here, or press to choose images" aria-label="Upload images for ${esc(c.name)}: drop image files here or press to choose them">Image</button>
             <button data-act="del-cat" data-id="${esc(c.id)}" class="danger">Delete</button></span></li>`).join("")
           : `<li class="muted">No categories in this group yet.</li>`}</ul></div>`).join("")
       : `<p class="muted">No groups yet. Add your first group below, for example Equipment.</p>`;
@@ -156,6 +157,16 @@ function start() {
         if (n) msg(`Saved ${n} items to ${findCat(id).c.name}.`);
       };
       input.click();
+    } else if (act === "images") {
+      const name = findCat(id)?.c.name || pretty(id);
+      const input = Object.assign(document.createElement("input"), { type: "file", accept: "image/*", multiple: true });
+      input.onchange = async () => {
+        const list = [...input.files].filter(isImage);
+        if (!list.length) return msg("No pictures were chosen.");
+        const { done, failed } = await uploadImages(list);
+        msg(`Images for ${name}: ${done} uploaded${failed ? `, ${failed} failed. Press Image to try again.` : "."}`);
+      };
+      input.click();
     } else if (act === "del-cat") {
       const { g, c } = findCat(id);
       if (!confirm(`Delete ${c.name} from the site? Images are kept.`)) return;
@@ -193,7 +204,7 @@ function start() {
   $("#newbtn").onclick = () => {
     if (!slug($("#newname").value)) return msg("Type a category name first.");
     if (!structure.groups.length) return msg("Add a group first, for example Equipment.");
-    if (files.includes(slug($("#newname").value))) return msg("A category with that name already exists. Use its Drop file button to replace it instead.");
+    if (files.includes(slug($("#newname").value))) return msg("A category with that name already exists. Use its JSON button to replace it instead.");
     $("#newfile").click();
   };
   $("#newfile").onchange = async (e) => {
@@ -274,15 +285,6 @@ function start() {
     await Promise.all([worker(), worker(), worker(), worker()]);
     return { done, failed };
   }
-
-  $("#imgbtn").onclick = () => $("#imgfile").click();
-  $("#imgfile").onchange = async (e) => {
-    const list = [...e.target.files].filter(isImage);
-    e.target.value = "";
-    if (!list.length) return msg("No images found in that folder.");
-    const { done, failed } = await uploadImages(list);
-    msg(`Images done: ${done} uploaded${failed ? `, ${failed} failed. Choose the folder again to retry.` : "."}`);
-  };
 
   // ---- Drag and drop: JSON files and images (single files or whole folders) ----
   const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");

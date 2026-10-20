@@ -28,7 +28,7 @@
   <div id="panel" hidden>
     <section>
       <h2>Groups and categories</h2>
-      <p class="muted">Press a group to open or close its categories. Each category has a <strong>Drop file</strong> button: drop a JSON file on it, or press it to choose one, to replace that category.</p>
+      <p class="muted">Press a group to open or close its categories. Each category has two drop buttons. <strong>JSON</strong> replaces its items with a JSON file, and <strong>Image</strong> uploads pictures. Drop files on a button, or press it to choose them. All pictures share one folder, so a picture with the same file name replaces the old one.</p>
       <div class="tree-tools"><button id="expand-all" type="button">Expand all</button><button id="collapse-all" type="button">Collapse all</button></div>
       <div id="tree"></div>
 
@@ -48,13 +48,6 @@
     </section>
 
     <section>
-      <h2>Images</h2>
-      <p class="muted">One folder for every category. Images with the same file name are replaced.</p>
-      <button id="imgbtn" class="dropbtn" data-drop="images">Drop images or choose folder</button>
-      <input id="imgfile" type="file" webkitdirectory multiple hidden>
-    </section>
-
-    <section>
       <h2>Backup</h2>
       <p class="muted">Download everything (menu layout and every category's items) as one file, and keep it somewhere safe. Pictures are not included, they stay in Supabase. Restoring puts the categories in the file back and replaces ones with the same name.</p>
       <div class="backup-row">
@@ -68,7 +61,7 @@
   </div>
 </main>
 <dialog id="preview"><div id="preview-body"></div><div class="btns"><button type="button" id="pv-cancel">Cancel</button><button type="button" id="pv-go" class="go">Upload</button></div></dialog>
-<div id="dropbanner" role="status">Drop the file on a Drop file button.</div>
+<div id="dropbanner" role="status">Drop the file on a JSON or Image button.</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>

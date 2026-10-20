@@ -226,3 +226,88 @@ body.menu-open { overflow: hidden; }
 #acct a:not(.btn) { font-weight: 700; }
 #acct button { background: rgba(250, 240, 216, .95); border-color: var(--accent); color: var(--text); font-weight: 600; }
 @media (max-width: 480px) { #acct .btn { padding: .4rem .9rem; font-size: .95rem; } }
+
+/* ---- Round 2: sticky header, home cards, sort and filters, compare, search highlight ---- */
+.top.sticky { position: sticky; top: 0; z-index: 30; background: rgba(236, 214, 164, .95); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); transition: transform .2s ease; }
+.top.sticky.hide { transform: translateY(-100%); }
+@media (prefers-reduced-motion: reduce) { .top.sticky { transition: none; } }
+
+.dg-top { display: flex; flex-direction: column; margin-bottom: .4rem; padding-bottom: .4rem; border-bottom: 1px solid var(--edge); }
+.dg-top button { display: flex; align-items: center; gap: .5rem; width: 100%; padding: .6rem .6rem; background: none; border: 0; border-radius: var(--radius); text-align: left; cursor: pointer; color: var(--text); font: 700 1.15rem/1.2 var(--display); }
+.dg-top button:hover { background: rgba(122, 74, 20, .12); }
+.dg-top small { margin-left: auto; color: var(--muted); font: 500 .85rem var(--font); }
+
+/* Home page */
+#items.home { display: block; }
+.home-lead { margin: 0 0 1rem; color: var(--muted); max-width: 40rem; }
+.home-grp h2 { margin: 1.4rem 0 .6rem; font: 700 1.5rem/1.2 var(--display); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.4rem, 1fr)); gap: .75rem; }
+.card { display: flex; flex-direction: column; align-items: center; gap: .25rem; padding: .9rem .6rem; background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius); cursor: pointer; text-align: center; }
+.card:hover { border-color: var(--accent); }
+.card img, .card-ph { width: 48px; height: 48px; object-fit: contain; display: grid; place-items: center; }
+.card-ph.star { font-size: 1.9rem; color: var(--accent); }
+.card strong { font: 700 1.15rem/1.2 var(--display); }
+.card small { color: var(--muted); }
+
+/* Sort and filters */
+.adv { flex: 1 1 100%; }
+.adv summary { display: inline-block; cursor: pointer; padding: .35rem .9rem; background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius); color: var(--muted); user-select: none; }
+.adv summary.active { border-color: var(--accent); color: var(--text); font-weight: 600; }
+.adv summary.active::after { content: " \2022"; color: var(--accent); }
+.adv-body { display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: center; margin-top: .6rem; }
+.adv-body label { display: flex; align-items: center; gap: .4rem; color: var(--muted); }
+.adv-body input { max-width: 9rem; flex: none; }
+.adv-body select { max-width: 14rem; }
+.dyef[hidden] { display: none; }
+.slot .from { color: var(--muted); font-size: .75rem; }
+#items.list .slot .from { margin-left: auto; }
+
+/* Item popup actions and compare */
+.dlg-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+.dlg-actions .fav { margin-top: 0; }
+.from-cat { margin: 0 0 .3rem; font-size: .9rem; }
+#cmp-tray { position: fixed; z-index: 45; left: max(1rem, env(safe-area-inset-left)); right: 4.6rem; bottom: max(1rem, env(safe-area-inset-bottom)); max-width: 36rem; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; padding: .55rem .75rem; background: #faf0d8; border: 1px solid var(--accent); border-radius: 10px; box-shadow: 0 6px 20px rgba(53, 33, 14, .3); }
+#cmp-tray[hidden] { display: none; }
+.tray-items { display: flex; flex-wrap: wrap; gap: .4rem; flex: 1 1 auto; min-width: 0; }
+.chip { display: inline-flex; align-items: center; gap: .3rem; padding: .1rem .2rem .1rem .6rem; border: 1px solid var(--edge); border-radius: 99px; background: var(--panel); font-size: .9rem; max-width: 100%; }
+.chip button { width: 1.5rem; height: 1.5rem; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer; font-size: 1.1rem; line-height: 1; }
+#cmp-tray > button { padding: .35rem .8rem; background: none; border: 1px solid var(--edge); border-radius: var(--radius); cursor: pointer; }
+#cmp-tray .tray-go { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
+.tray-hint { font-size: .85rem; }
+#cmp { width: min(42rem, 94vw); }
+.cmp-scroll { overflow-x: auto; }
+.cmp { width: 100%; border-collapse: collapse; font-size: .95rem; }
+.cmp th, .cmp td { padding: .45rem .6rem; border-bottom: 1px solid var(--edge); text-align: left; vertical-align: top; }
+.cmp thead th { text-align: center; }
+.cmp thead img { display: block; width: 56px; height: 56px; margin: 0 auto .25rem; object-fit: contain; }
+.cmp thead strong { display: block; }
+.cmp thead small { color: var(--muted); font-weight: 400; }
+.cmp tbody th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+.cmp td.win { font-weight: 700; color: #1f5a1f; background: rgba(60, 140, 60, .14); }
+.cmp-note { font-size: .85rem; margin: .6rem 0 0; }
+#cmp form button { padding: .5rem 1.25rem; background: none; border: 1px solid var(--edge); border-radius: var(--radius); cursor: pointer; }
+
+/* Search results: highlight and keyboard selection */
+.gs-t mark { background: rgba(122, 74, 20, .25); color: inherit; border-radius: 2px; padding: 0 1px; }
+.gs-row.gs-active { background: rgba(122, 74, 20, .22); }
+
+/* Owner panel: backup and upload preview */
+.admin .backup-row { display: flex; flex-wrap: wrap; gap: .5rem; }
+#preview { width: min(30rem, 94vw); }
+#preview h2 { margin-top: 0; }
+#preview .warn { color: #8a2a1a; margin: .4rem 0; }
+#preview ul { margin: .3rem 0; }
+#preview .btns { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1.25rem; }
+#preview button { padding: .5rem 1.1rem; background: none; border: 1px solid var(--edge); border-radius: var(--radius); cursor: pointer; }
+#preview .go { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
+#preview .go:disabled { opacity: .5; cursor: not-allowed; }
+.admin .pw-form { margin-top: 1.5rem; }
+#cmp, #preview { background: #faf0d8; }
+.cmp { table-layout: fixed; }
+.cmp thead td:first-child { width: 25%; }
+.cmp tbody th { white-space: normal; }
+.cmp td, .cmp th { overflow-wrap: anywhere; }
+@media (max-width: 520px) { #cmp { padding: 1rem; } .cmp { font-size: .88rem; } .cmp th, .cmp td { padding: .4rem .35rem; } }
+.cmp th { overflow-wrap: normal; }
+.cmp thead td:first-child { width: 30%; }
+@media (max-width: 520px) { .cmp tbody th { font-size: .82rem; } }

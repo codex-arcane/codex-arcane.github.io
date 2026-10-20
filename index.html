@@ -31,7 +31,7 @@
       <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
     </button>
     <a class="brand" href="index.html"><img src="assets/logo.png" alt="Home" width="64" height="58"></a>
-    <h1 class="wordmark">Codex Arcane</h1>
+    <h1 class="wordmark"><a href="index.html">Codex Arcane</a></h1>
     <div class="gsearch" role="search">
       <svg class="gs-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <input id="gs" type="search" placeholder="Search the whole site" autocomplete="off" enterkeyhint="search" aria-label="Search the whole site" aria-controls="gs-results">
@@ -50,6 +50,7 @@
     </button>
   </div>
   <div id="menu-list"></div>
+  <div id="drawer-acct" class="drawer-acct"></div>
 </nav>
 <div id="banner" hidden>
   <span>You're browsing as a guest. Your favorites and settings are saved only in this browser. <a href="account.html?next=index.html">Create an account</a> to keep them on any device.</span>
@@ -61,28 +62,30 @@
   <div class="tools" hidden>
     <input id="q" type="search" placeholder="Filter this category" aria-label="Filter items in this category">
     <select id="type" aria-label="Filter by how it's obtained"></select>
+    <button id="adv-btn" class="adv-btn" type="button" aria-expanded="false" aria-controls="adv-panel">Sort &amp; filters</button>
     <label class="chk"><input type="checkbox" id="favonly"> Favorites only</label>
+    <div id="adv-panel" class="adv-body" hidden>
+      <label>Sort
+        <select id="sort">
+          <option value="name">Name A to Z</option>
+          <option value="name-desc">Name Z to A</option>
+          <option value="hi">Highest stat value</option>
+          <option value="lo">Lowest stat value</option>
+        </select>
+      </label>
+      <div class="statpick">
+        <input id="stat-q" type="text" placeholder="Search stats (any stat)" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="stat-list" aria-label="Filter by stat">
+        <button id="stat-clear" class="stat-clear" type="button" aria-label="Clear stat" hidden>&times;</button>
+        <div id="stat-list" role="listbox" aria-label="Stats" hidden></div>
+      </div>
+      <label class="dyef">Dye <input id="dye" list="dye-list" placeholder="e.g. A30" autocomplete="off"></label>
+      <datalist id="dye-list"></datalist>
+    </div>
     <div class="views" role="group" aria-label="Layout">
       <button id="v-grid" aria-pressed="true">Slots</button>
       <button id="v-list" aria-pressed="false">List</button>
     </div>
     <span id="count" aria-live="polite"></span>
-    <details class="adv">
-      <summary>Sort &amp; filters</summary>
-      <div class="adv-body">
-        <label>Sort
-          <select id="sort">
-            <option value="name">Name A to Z</option>
-            <option value="name-desc">Name Z to A</option>
-            <option value="hi">Highest stat value</option>
-            <option value="lo">Lowest stat value</option>
-          </select>
-        </label>
-        <label>Stat <select id="stat"><option value="">Any stat</option></select></label>
-        <label class="dyef">Dye <input id="dye" list="dye-list" placeholder="e.g. A30" autocomplete="off"></label>
-        <datalist id="dye-list"></datalist>
-      </div>
-    </details>
   </div>
   <div id="items"></div>
   <button id="more" hidden>Show more</button>

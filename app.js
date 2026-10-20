@@ -249,19 +249,13 @@ function updateCrumb() {
   c.textContent = state.cat === FAV ? "Favorites" : remote && g ? `${g.name} \u203A ${state.cat.name}` : state.cat.name;
 }
 
-// Home page: one container per higher category (like Equipment), with its item count and the categories inside it.
+// Home page: one card per higher category (like Equipment) with how many items it holds. Pressing one opens the menu on it.
 function renderHome() {
-  const total = state.cats.reduce((n, c) => n + c.count, 0);
-  const plural = (n, one, many) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
   $("#items").className = "home";
-  $("#items").innerHTML = `<p class="home-lead">${plural(total, "item", "items")} in ${plural(state.cats.length, "category", "categories")}. Pick a category, or use the search bar to find anything.</p>`
-    + state.groups.filter((g) => g.cats.length).map((g) => {
-      const n = g.cats.reduce((t, c) => t + c.count, 0);
-      return `<section class="hg" aria-label="${esc(g.name)}">
-        <header class="hg-head"><h2>${esc(g.name)}</h2><span>${plural(n, "item", "items")}</span></header>
-        <div class="hg-cats">${g.cats.map((c) => `<button class="cat-chip" type="button" data-id="${esc(c.id)}"><span>${esc(c.name)}</span><small>${c.count.toLocaleString()}</small></button>`).join("")}</div>
-      </section>`;
-    }).join("");
+  $("#items").innerHTML = `<div class="hg-grid">${state.groups.filter((g) => g.cats.length).map((g) => {
+    const n = g.cats.reduce((t, c) => t + c.count, 0);
+    return `<button class="hg-card" type="button" data-g="${esc(g.id)}"><strong>${esc(g.name)}</strong><span>${n.toLocaleString()} ${n === 1 ? "item" : "items"}</span></button>`;
+  }).join("")}</div>`;
 }
 
 function showHome() {
@@ -307,11 +301,12 @@ function startList(items) {
   $("#q").value = ""; $("#dye").value = ""; $("#sort").value = "name";
   const types = [...new Set(items.flatMap((i) => i.obtain_types || []))].sort();
   $("#type").innerHTML = `<option value="">All sources</option>` + types.map((t) => `<option>${esc(t)}</option>`).join("");
-  // Every stat, in alphabetical order, with how many items have it.
+  // Each kind of stat that has a number (ATK +12 -> ATK), once, in alphabetical order. The most common one is the default for sorting.
   const counts = new Map();
-  for (const i of items) for (const n of statsOf(i).keys()) counts.set(n, (counts.get(n) || 0) + 1);
-  statOpts = [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-  $("#stat-q").value = ""; $("#stat-q").placeholder = "Search stats (any stat)"; $("#stat-clear").hidden = true; closeStatList();
+  for (const i of items) for (const [n, v] of statsOf(i)) if (v !== null) counts.set(n, (counts.get(n) || 0) + 1);
+  statOpts = [...counts.keys()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })).map((name) => ({ name }));
+  statDefault = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || "";
+  $("#stat-label").textContent = "Any stat"; closeStat();
   const dyes = [...new Set(items.flatMap((i) => (i.dyes || []).map(dyeCode)))].sort().slice(0, 600);
   $("#dye-list").innerHTML = dyes.map((d) => `<option value="${esc(d)}">`).join("");
   $(".dyef").hidden = !dyes.length;
@@ -434,37 +429,42 @@ function setAdv(open) {
 }
 $("#adv-btn").onclick = () => setAdv($("#adv-panel").hidden);
 
-// Stat picker: a search box with the stat list under it
-let statOpts = [];
+// Stat picker: works like a normal dropdown, and when it opens there is a search box above the list
+let statOpts = [], statDefault = "";
 function renderStatList() {
   const q = $("#stat-q").value.trim().toLowerCase();
-  const typed = q && statLabel(state.stat || "").toLowerCase() !== q;  // when a stat is already chosen, show everything again
-  const list = statOpts.filter((o) => !typed || statLabel(o.name).toLowerCase().includes(q));
-  $("#stat-list").innerHTML = list.length
-    ? list.map((o) => `<button type="button" role="option" class="stat-opt" aria-selected="${o.name === state.stat}" data-stat="${esc(o.name)}"><span>${esc(statLabel(o.name))}</span><small>${o.count}</small></button>`).join("")
-    : `<p class="gs-note">No stat matches \u201C${esc($("#stat-q").value.trim())}\u201D.</p>`;
+  const list = statOpts.filter((o) => !q || statLabel(o.name).toLowerCase().includes(q));
+  const opt = (name, label) => `<button type="button" role="option" class="stat-opt" aria-selected="${name === state.stat}" data-stat="${esc(name)}">${esc(label)}</button>`;
+  $("#stat-list").innerHTML = (q ? "" : opt("", "Any stat")) + list.map((o) => opt(o.name, statLabel(o.name))).join("")
+    + (q && !list.length ? `<p class="gs-note">No stat matches \u201C${esc($("#stat-q").value.trim())}\u201D.</p>` : "");
 }
-function openStatList() { renderStatList(); $("#stat-list").hidden = false; $("#stat-q").setAttribute("aria-expanded", "true"); }
-function closeStatList() { $("#stat-list").hidden = true; $("#stat-q").setAttribute("aria-expanded", "false"); }
-function chooseStat(name) {
+function openStat() {
+  $("#stat-q").value = "";
+  renderStatList();
+  $("#stat-pop").hidden = false;
+  $("#stat-btn").setAttribute("aria-expanded", "true");
+  $("#stat-q").focus();
+}
+function closeStat(refocus = false) {
+  $("#stat-pop").hidden = true;
+  $("#stat-btn").setAttribute("aria-expanded", "false");
+  if (refocus) $("#stat-btn").focus();
+}
+function chooseStat(name, { focus = true } = {}) {
   state.stat = name;
-  $("#stat-q").value = name ? statLabel(name) : "";
-  $("#stat-q").placeholder = "Search stats (any stat)";
-  $("#stat-clear").hidden = !name;
+  $("#stat-label").textContent = name ? statLabel(name) : "Any stat";
   if (!name && (state.sort === "hi" || state.sort === "lo")) { state.sort = "name"; $("#sort").value = "name"; }
-  closeStatList();
+  closeStat(focus);
   state.shown = PAGE; updateAdvDot(); render();
 }
-$("#stat-q").onfocus = openStatList;
-$("#stat-q").onclick = openStatList;
-$("#stat-q").oninput = () => { if (state.stat) { state.stat = ""; $("#stat-clear").hidden = true; state.shown = PAGE; updateAdvDot(); render(); } openStatList(); };
+$("#stat-btn").onclick = () => ($("#stat-pop").hidden ? openStat() : closeStat());
+$("#stat-q").oninput = renderStatList;
 $("#stat-q").onkeydown = (e) => {
-  if (e.key === "Enter") { e.preventDefault(); const first = $("#stat-list .stat-opt"); if (first) chooseStat(first.dataset.stat); }
-  else if (e.key === "Escape") { closeStatList(); }
+  if (e.key === "Enter") { e.preventDefault(); const first = $("#stat-list .stat-opt:not([data-stat=\"\"])"); if (first && $("#stat-q").value.trim()) chooseStat(first.dataset.stat); }
+  else if (e.key === "Escape") { e.stopPropagation(); closeStat(true); }
 };
 $("#stat-list").onclick = (e) => { const b = e.target.closest(".stat-opt"); if (b) chooseStat(b.dataset.stat); };
-$("#stat-clear").onclick = () => { chooseStat(""); $("#stat-q").focus(); };
-document.addEventListener("click", (e) => { if (!e.target.closest(".statpick")) closeStatList(); });
+document.addEventListener("click", (e) => { if (!e.target.closest(".statpick")) closeStat(); });
 
 // ---- Item popup, with links and compare ----
 const compare = [];  // up to two {item, cat}
@@ -561,13 +561,16 @@ $("#type").onchange = (e) => { state.type = e.target.value; state.shown = PAGE; 
 $("#sort").onchange = (e) => {
   state.sort = e.target.value;
   state.shown = PAGE; updateAdvDot(); render();
-  if ((state.sort === "hi" || state.sort === "lo") && !state.stat) { $("#stat-q").placeholder = "Pick a stat to sort by"; $("#stat-q").focus(); }
+  if ((state.sort === "hi" || state.sort === "lo") && !state.stat) {
+    if (statDefault) chooseStat(statDefault, { focus: false });   // stat is still changeable; sorting just needs one to compare
+    else { state.sort = "name"; e.target.value = "name"; updateAdvDot(); render(); }
+  }
 };
 $("#dye").oninput = (e) => { state.dye = e.target.value.trim().toLowerCase(); state.shown = PAGE; updateAdvDot(); render(); };
 $("#more").onclick = () => { state.shown += PAGE; renderMore(); };
 $("#items").onclick = (e) => {
-  const card = e.target.closest(".cat-chip");
-  if (card) return pick(card.dataset.id);
+  const card = e.target.closest(".hg-card");
+  if (card) { openGroups.add(card.dataset.g); return openMenu(); }
   const b = e.target.closest(".slot");
   if (b) { const it = state.found[Number(b.dataset.n)]; if (it) detail(it, catOf(it)); }
 };

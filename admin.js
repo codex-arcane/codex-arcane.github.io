@@ -66,13 +66,13 @@ function start() {
         <div class="grp-head">
           <button type="button" class="grp-toggle" data-act="toggle" data-g="${esc(g.id)}" aria-expanded="${open.has(g.id)}">
             <svg class="chev" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <span>${esc(g.name)}</span><small>${g.categories.length} ${g.categories.length === 1 ? "category" : "categories"}</small></button>
+            <span>${esc(g.name)}</span><small>${g.categories.length}<span class="w"> ${g.categories.length === 1 ? "category" : "categories"}</span></small></button>
           <span><button data-act="ren-group" data-g="${esc(g.id)}">Rename</button> <button data-act="del-group" data-g="${esc(g.id)}" class="danger">Delete</button></span></div>
         <ul class="rows"${open.has(g.id) ? "" : " hidden"}>${g.categories.length ? g.categories.map((c) => `
           <li data-cat="${esc(c.id)}"><span><strong>${esc(c.name)}</strong></span>
             <span><select data-move="${esc(c.id)}" aria-label="Move ${esc(c.name)} to group">${opts(g.id)}</select>
             <button data-act="ren-cat" data-id="${esc(c.id)}">Rename</button>
-            <button data-act="replace" data-id="${esc(c.id)}">Replace JSON</button>
+            <button class="dropbtn" data-act="replace" data-drop="cat" data-id="${esc(c.id)}" title="Drop a JSON file here, or press to choose one" aria-label="Replace ${esc(c.name)}: drop a JSON file here or press to choose one">Drop file</button>
             <button data-act="del-cat" data-id="${esc(c.id)}" class="danger">Delete</button></span></li>`).join("")
           : `<li class="muted">No categories in this group yet.</li>`}</ul></div>`).join("")
       : `<p class="muted">No groups yet. Add your first group below, for example Equipment.</p>`;
@@ -193,7 +193,7 @@ function start() {
   $("#newbtn").onclick = () => {
     if (!slug($("#newname").value)) return msg("Type a category name first.");
     if (!structure.groups.length) return msg("Add a group first, for example Equipment.");
-    if (files.includes(slug($("#newname").value))) return msg("A category with that name already exists. Use Replace JSON on it instead.");
+    if (files.includes(slug($("#newname").value))) return msg("A category with that name already exists. Use its Drop file button to replace it instead.");
     $("#newfile").click();
   };
   $("#newfile").onchange = async (e) => {
@@ -286,13 +286,12 @@ function start() {
 
   // ---- Drag and drop: JSON files and images (single files or whole folders) ----
   const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
-  const rowOf = (e) => e.target.closest?.("li[data-cat]");
   let depth = 0, busy = false;
 
   function endDrag() {
     depth = 0;
     document.body.classList.remove("dragging");
-    document.querySelectorAll(".drop-row").forEach((el) => el.classList.remove("drop-row"));
+    document.querySelectorAll(".dropbtn.over").forEach((el) => el.classList.remove("over"));
   }
 
   // Reads everything that was dropped, including the contents of dropped folders.
@@ -318,20 +317,23 @@ function start() {
     return out;
   }
 
-  async function handleDrop(dt, rowId) {
+  // target: { mode: "cat", id } (replace one category), { mode: "new" } (add a category) or { mode: "images" }
+  async function handleDrop(dt, target) {
     if (busy) return msg("Still uploading the last drop. Wait for it to finish, then drop again.");
     busy = true;
     try {
       msg("Reading dropped files...");
       const dropped = await filesFromDrop(dt);
-      const jsons = dropped.filter((f) => /\.json$/i.test(f.name));
-      const images = dropped.filter(isImage);
-      if (!jsons.length && !images.length) return msg("Nothing to upload. Drop .json files or images (or a folder that has them).");
+      const jsons = target.mode === "images" ? [] : dropped.filter((f) => /\.json$/i.test(f.name));
+      const images = target.mode === "images" ? dropped.filter(isImage) : [];
+      if (!jsons.length && !images.length) return msg(target.mode === "images" ? "Nothing to upload. Drop image files, or a folder that has them." : "Nothing to upload. Drop a .json file here.");
+      if (target.mode === "cat" && jsons.length > 1) return msg("Drop just one JSON file on a category.");
+      const rowId = target.mode === "cat" ? target.id : null;
       const report = [];
 
       for (const file of jsons) {
         let id, name, replacing = false;
-        if (rowId && jsons.length === 1) {            // dropped on a category row: replace that category
+        if (rowId) {                                   // dropped on a category's Drop file button: replace that category
           id = rowId;
           name = findCat(id)?.c.name || pretty(id);
           replacing = true;
@@ -373,6 +375,11 @@ function start() {
     }
   }
 
+  const targetOf = (e) => {
+    const b = e.target.closest?.(".dropbtn[data-drop]");
+    if (!b) return null;
+    return b.dataset.drop === "cat" ? { mode: "cat", id: b.dataset.id } : { mode: b.dataset.drop };
+  };
   window.addEventListener("dragenter", (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
@@ -382,10 +389,10 @@ function start() {
   window.addEventListener("dragover", (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = "copy";
-    const row = rowOf(e);
-    document.querySelectorAll(".drop-row").forEach((el) => el !== row && el.classList.remove("drop-row"));
-    row?.classList.add("drop-row");
+    const btn = targetOf(e) && e.target.closest(".dropbtn");
+    e.dataTransfer.dropEffect = btn ? "copy" : "none";
+    document.querySelectorAll(".dropbtn.over").forEach((el) => el !== btn && el.classList.remove("over"));
+    btn?.classList.add("over");
   });
   window.addEventListener("dragleave", (e) => {
     if (hasFiles(e) && --depth <= 0) endDrag();
@@ -393,9 +400,9 @@ function start() {
   window.addEventListener("drop", (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();                 // stops the browser from opening the file instead
-    const row = rowOf(e);
+    const target = targetOf(e);
     endDrag();
-    if ($("#panel").hidden) return;
-    handleDrop(e.dataTransfer, row?.dataset.cat);
+    if (!target || $("#panel").hidden) return;
+    handleDrop(e.dataTransfer, target);
   });
 }

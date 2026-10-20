@@ -43,6 +43,7 @@ function start() {
     $("#pass2").required = m === "up";
     $("#pass").autocomplete = m === "in" ? "current-password" : "new-password";
     $("#submit").textContent = m === "in" ? "Sign in" : "Create account";
+    $("#forgot").hidden = m !== "in";
     $("#hint").textContent = "Letters, numbers and underscores, 3 to 20 characters.";
     msg("");
   }
@@ -93,6 +94,16 @@ function start() {
   };
 
   $("#signout").onclick = () => sb.auth.signOut();
+
+  $("#pwform").onsubmit = async (e) => {
+    e.preventDefault();
+    const say = (t) => ($("#pwmsg").textContent = t);
+    if ($("#np").value !== $("#np2").value) return say("The two passwords don't match.");
+    const { error } = await sb.auth.updateUser({ password: $("#np").value });
+    if (error) return say(`Couldn't change it: ${error.message}`);
+    $("#np").value = $("#np2").value = "";
+    say("Password changed. Use the new one next time you sign in.");
+  };
 
   sb.auth.onAuthStateChange((_event, session) => {
     const user = session?.user;

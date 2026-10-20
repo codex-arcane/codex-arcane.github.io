@@ -8,7 +8,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;700&family=Cinzel+Decorative:wght@700&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="assets/favicon.png">
-<link rel="apple-touch-icon" href="assets/logo.png">
+<link rel="apple-touch-icon" href="assets/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#e6cf9f">
 <meta name="description" content="Browse and search every item in Codex Arcane.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Codex Arcane">
@@ -23,7 +25,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="top">
+<header class="top sticky">
   <div class="titlebar">
     <button id="menu-btn" class="icon-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="drawer">
       <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
@@ -65,10 +67,30 @@
       <button id="v-list" aria-pressed="false">List</button>
     </div>
     <span id="count" aria-live="polite"></span>
+    <details class="adv">
+      <summary>Sort &amp; filters</summary>
+      <div class="adv-body">
+        <label>Sort
+          <select id="sort">
+            <option value="name">Name A to Z</option>
+            <option value="name-desc">Name Z to A</option>
+            <option value="hi">Highest stat value</option>
+            <option value="lo">Lowest stat value</option>
+          </select>
+        </label>
+        <label>Stat <select id="stat"><option value="">Any stat</option></select></label>
+        <label class="dyef">Dye <input id="dye" list="dye-list" placeholder="e.g. A30" autocomplete="off"></label>
+        <datalist id="dye-list"></datalist>
+      </div>
+    </details>
   </div>
   <div id="items"></div>
   <button id="more" hidden>Show more</button>
 </main>
+
+<div id="cmp-tray" hidden role="region" aria-label="Compare"></div>
+
+<dialog id="cmp"><div id="cmp-body"></div><form method="dialog"><button type="button" id="cmp-clear">Clear compare</button> <button>Close</button></form></dialog>
 
 <dialog id="dlg"><div id="dlg-body"></div><form method="dialog"><button>Close</button></form></dialog>
 

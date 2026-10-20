@@ -214,7 +214,14 @@ $("#menu-list").onclick = (e) => {
   const b = e.target.closest("button[data-id]");
   if (b) { closeMenu(false); pick(b.dataset.id); }
 };
-$(".brand").onclick = (e) => { e.preventDefault(); setHash(""); };
+document.querySelectorAll(".brand, .wordmark a").forEach((a) => { a.onclick = (e) => { e.preventDefault(); closeMenu(false); setHash(""); window.scrollTo(0, 0); }; });
+for (const id of ["#dlg", "#cmp"]) {  // pressing the dark area around a popup closes it
+  $(id).addEventListener("click", (e) => {
+    if (e.target !== e.currentTarget) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) e.currentTarget.close();
+  });
+}
 
 // Header: stays at the top. On phones it slides away while scrolling down and comes back when scrolling up.
 {
@@ -242,18 +249,19 @@ function updateCrumb() {
   c.textContent = state.cat === FAV ? "Favorites" : remote && g ? `${g.name} \u203A ${state.cat.name}` : state.cat.name;
 }
 
-// Home page: a card for every category, grouped like the menu.
+// Home page: one container per higher category (like Equipment), with its item count and the categories inside it.
 function renderHome() {
   const total = state.cats.reduce((n, c) => n + c.count, 0);
-  const favN = prefs.favs.length;
-  const card = (c, extra = "") => {
-    const first = (state.cache[c.id] || [])[0], src = first ? imgSrc(c, first) : "";
-    return `<button class="card" type="button" data-id="${esc(c.id)}">${src ? `<img src="${src}" alt="" loading="lazy" decoding="async" width="48" height="48">` : '<span class="card-ph" aria-hidden="true"></span>'}<strong>${esc(c.name)}</strong><small>${extra || `${c.count.toLocaleString()} items`}</small></button>`;
-  };
+  const plural = (n, one, many) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
   $("#items").className = "home";
-  $("#items").innerHTML = `<p class="home-lead">${total.toLocaleString()} items in ${state.cats.length} ${state.cats.length === 1 ? "category" : "categories"}. Pick one below, or use the search bar to find anything.</p>`
-    + (favN ? `<section class="home-grp"><h2>Your favorites</h2><div class="cards"><button class="card" type="button" data-id="favorites"><span class="card-ph star" aria-hidden="true">\u2605</span><strong>Favorites</strong><small>${favN} ${favN === 1 ? "item" : "items"}</small></button></div></section>` : "")
-    + state.groups.filter((g) => g.cats.length).map((g) => `<section class="home-grp">${remote ? `<h2>${esc(g.name)}</h2>` : ""}<div class="cards">${g.cats.map((c) => card(c)).join("")}</div></section>`).join("");
+  $("#items").innerHTML = `<p class="home-lead">${plural(total, "item", "items")} in ${plural(state.cats.length, "category", "categories")}. Pick a category, or use the search bar to find anything.</p>`
+    + state.groups.filter((g) => g.cats.length).map((g) => {
+      const n = g.cats.reduce((t, c) => t + c.count, 0);
+      return `<section class="hg" aria-label="${esc(g.name)}">
+        <header class="hg-head"><h2>${esc(g.name)}</h2><span>${plural(n, "item", "items")}</span></header>
+        <div class="hg-cats">${g.cats.map((c) => `<button class="cat-chip" type="button" data-id="${esc(c.id)}"><span>${esc(c.name)}</span><small>${c.count.toLocaleString()}</small></button>`).join("")}</div>
+      </section>`;
+    }).join("");
 }
 
 function showHome() {
@@ -299,15 +307,15 @@ function startList(items) {
   $("#q").value = ""; $("#dye").value = ""; $("#sort").value = "name";
   const types = [...new Set(items.flatMap((i) => i.obtain_types || []))].sort();
   $("#type").innerHTML = `<option value="">All sources</option>` + types.map((t) => `<option>${esc(t)}</option>`).join("");
-  // Stats that have a number (ATK +12) can be sorted; the most common ones come first.
+  // Every stat, in alphabetical order, with how many items have it.
   const counts = new Map();
-  for (const i of items) for (const [n, v] of statsOf(i)) if (v !== null) counts.set(n, (counts.get(n) || 0) + 1);
-  const names = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 80).map((x) => x[0]);
-  $("#stat").innerHTML = `<option value="">Any stat</option>` + names.map((n) => `<option value="${esc(n)}">${esc(statLabel(n))}</option>`).join("");
+  for (const i of items) for (const n of statsOf(i).keys()) counts.set(n, (counts.get(n) || 0) + 1);
+  statOpts = [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  $("#stat-q").value = ""; $("#stat-q").placeholder = "Search stats (any stat)"; $("#stat-clear").hidden = true; closeStatList();
   const dyes = [...new Set(items.flatMap((i) => (i.dyes || []).map(dyeCode)))].sort().slice(0, 600);
   $("#dye-list").innerHTML = dyes.map((d) => `<option value="${esc(d)}">`).join("");
   $(".dyef").hidden = !dyes.length;
-  $(".adv").open = false;
+  setAdv(false);
   updateAdvDot();
   render();
   window.scrollTo(0, 0);
@@ -418,8 +426,45 @@ function refresh() {  // after favorites change or sign-in sync
 }
 function updateAdvDot() {
   const on = state.stat || state.dye || state.sort !== "name";
-  $(".adv summary").classList.toggle("active", !!on);
+  $("#adv-btn").classList.toggle("active", !!on);
 }
+function setAdv(open) {
+  $("#adv-panel").hidden = !open;
+  $("#adv-btn").setAttribute("aria-expanded", open);
+}
+$("#adv-btn").onclick = () => setAdv($("#adv-panel").hidden);
+
+// Stat picker: a search box with the stat list under it
+let statOpts = [];
+function renderStatList() {
+  const q = $("#stat-q").value.trim().toLowerCase();
+  const typed = q && statLabel(state.stat || "").toLowerCase() !== q;  // when a stat is already chosen, show everything again
+  const list = statOpts.filter((o) => !typed || statLabel(o.name).toLowerCase().includes(q));
+  $("#stat-list").innerHTML = list.length
+    ? list.map((o) => `<button type="button" role="option" class="stat-opt" aria-selected="${o.name === state.stat}" data-stat="${esc(o.name)}"><span>${esc(statLabel(o.name))}</span><small>${o.count}</small></button>`).join("")
+    : `<p class="gs-note">No stat matches \u201C${esc($("#stat-q").value.trim())}\u201D.</p>`;
+}
+function openStatList() { renderStatList(); $("#stat-list").hidden = false; $("#stat-q").setAttribute("aria-expanded", "true"); }
+function closeStatList() { $("#stat-list").hidden = true; $("#stat-q").setAttribute("aria-expanded", "false"); }
+function chooseStat(name) {
+  state.stat = name;
+  $("#stat-q").value = name ? statLabel(name) : "";
+  $("#stat-q").placeholder = "Search stats (any stat)";
+  $("#stat-clear").hidden = !name;
+  if (!name && (state.sort === "hi" || state.sort === "lo")) { state.sort = "name"; $("#sort").value = "name"; }
+  closeStatList();
+  state.shown = PAGE; updateAdvDot(); render();
+}
+$("#stat-q").onfocus = openStatList;
+$("#stat-q").onclick = openStatList;
+$("#stat-q").oninput = () => { if (state.stat) { state.stat = ""; $("#stat-clear").hidden = true; state.shown = PAGE; updateAdvDot(); render(); } openStatList(); };
+$("#stat-q").onkeydown = (e) => {
+  if (e.key === "Enter") { e.preventDefault(); const first = $("#stat-list .stat-opt"); if (first) chooseStat(first.dataset.stat); }
+  else if (e.key === "Escape") { closeStatList(); }
+};
+$("#stat-list").onclick = (e) => { const b = e.target.closest(".stat-opt"); if (b) chooseStat(b.dataset.stat); };
+$("#stat-clear").onclick = () => { chooseStat(""); $("#stat-q").focus(); };
+document.addEventListener("click", (e) => { if (!e.target.closest(".statpick")) closeStatList(); });
 
 // ---- Item popup, with links and compare ----
 const compare = [];  // up to two {item, cat}
@@ -456,14 +501,6 @@ function detail(item, cat = catOf(item), { hash = true } = {}) {
     if (k < 0 && compare.length === 2) openCompare();
   });
 
-  const link = location.origin + location.pathname + location.search + `#${encodeURIComponent(cat.id)}/${encodeURIComponent(item.id)}`;
-  const lb = btn(navigator.share && matchMedia("(pointer: coarse)").matches ? "Share link" : "Copy link", async () => {
-    try {
-      if (navigator.share && matchMedia("(pointer: coarse)").matches) { await navigator.share({ title: `${item.name} - Codex Arcane`, url: link }); return; }
-      await navigator.clipboard.writeText(link);
-      lb.textContent = "Link copied";
-    } catch (err) { if (err?.name !== "AbortError") prompt("Copy this link:", link); }
-  });
   $("#dlg-body").append(actions);
 
   openItem = { item, cat };
@@ -521,17 +558,15 @@ $("#cmp-clear").onclick = () => { compare.length = 0; renderTray(); $("#cmp").cl
 
 $("#q").oninput = (e) => { state.q = e.target.value.trim().toLowerCase(); state.shown = PAGE; render(); };
 $("#type").onchange = (e) => { state.type = e.target.value; state.shown = PAGE; render(); };
-$("#stat").onchange = (e) => { state.stat = e.target.value; if (!state.stat && (state.sort === "hi" || state.sort === "lo")) { state.sort = "name"; $("#sort").value = "name"; } state.shown = PAGE; updateAdvDot(); render(); };
 $("#sort").onchange = (e) => {
   state.sort = e.target.value;
-  if ((state.sort === "hi" || state.sort === "lo") && !state.stat && $("#stat").options.length > 1) { state.stat = $("#stat").options[1].value; $("#stat").value = state.stat; }
-  if ((state.sort === "hi" || state.sort === "lo") && !state.stat) { state.sort = "name"; e.target.value = "name"; }
   state.shown = PAGE; updateAdvDot(); render();
+  if ((state.sort === "hi" || state.sort === "lo") && !state.stat) { $("#stat-q").placeholder = "Pick a stat to sort by"; $("#stat-q").focus(); }
 };
 $("#dye").oninput = (e) => { state.dye = e.target.value.trim().toLowerCase(); state.shown = PAGE; updateAdvDot(); render(); };
 $("#more").onclick = () => { state.shown += PAGE; renderMore(); };
 $("#items").onclick = (e) => {
-  const card = e.target.closest(".card");
+  const card = e.target.closest(".cat-chip");
   if (card) return pick(card.dataset.id);
   const b = e.target.closest(".slot");
   if (b) { const it = state.found[Number(b.dataset.n)]; if (it) detail(it, catOf(it)); }
@@ -651,9 +686,11 @@ document.addEventListener("click", (e) => { if (!e.target.closest(".gsearch")) $
 // Account area. Signing in is optional: guests just see a reminder.
 function showAccount() {
   const owner = !!user && user.email === `${CFG.ownerUsername}@${CFG.emailDomain}`.toLowerCase();
-  $("#acct").innerHTML = user
-    ? `${owner ? '<a href="admin.html">Owner panel</a> ' : ""}<span>${esc(user.email.split("@")[0])}</span> <button id="out">Sign out</button>`
+  const html = user
+    ? `${owner ? '<a href="admin.html">Owner panel</a> ' : ""}<span>${esc(user.email.split("@")[0])}</span> <button class="out" type="button">Sign out</button>`
     : remote ? `<a class="btn" href="account.html?next=index.html">Sign in</a>` : "";
+  $("#acct").innerHTML = html;
+  $("#drawer-acct").innerHTML = html;
   let dismissed = false;
   try { dismissed = localStorage.getItem("gear-banner") === "1"; } catch {}
   $("#banner").hidden = !remote || !!user || dismissed;
@@ -666,7 +703,7 @@ async function syncAccount() {
   savePrefs(); applyPrefs();
   renderMenu(); refresh();
 }
-$("#acct").onclick = (e) => { if (e.target.id === "out") sb.auth.signOut(); };
+document.addEventListener("click", (e) => { if (e.target.closest(".out") && sb) sb.auth.signOut(); });
 $("#dismiss").onclick = () => { try { localStorage.setItem("gear-banner", "1"); } catch {} $("#banner").hidden = true; };
 if (sb) {
   sb.auth.onAuthStateChange((event, session) => {

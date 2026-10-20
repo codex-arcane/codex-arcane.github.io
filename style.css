@@ -432,6 +432,25 @@ body.dragging .admin .dropbtn { border-width: 2px; background: rgba(252, 241, 21
   .rows li > span:first-child { order: 1; flex: 1 1 0; min-width: 0; }
   .rows li [data-act="del-cat"] { order: 1; }
   .rows li[data-cat]::after { content: ""; order: 2; flex-basis: 100%; height: 0; }
-  .rows li select, .rows li [data-act="ren-cat"], .rows li [data-act="replace"] { order: 3; }
+  .rows li select, .rows li [data-act="ren-cat"], .rows li [data-act="replace"], .rows li [data-act="images"] { order: 3; }
   .rows li { gap: .35rem; }
 }
+
+/* Round 4: home cards, stat dropdown with search */
+.hg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: .7rem; max-width: 64rem; }
+.hg-card { display: flex; flex-direction: column; align-items: flex-start; gap: .2rem; padding: .9rem 1rem; background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; cursor: pointer; text-align: left; }
+.hg-card:hover { border-color: var(--accent); }
+.hg-card strong { font: 700 1.25rem/1.2 var(--display); }
+.hg-card span { color: var(--muted); font-size: .85rem; }
+
+.statfield { display: flex; align-items: center; gap: .4rem; font-size: .9rem; color: var(--muted); }
+.statpick { position: relative; flex: none; max-width: none; display: block; }
+.stat-btn { display: block; min-width: 10rem; max-width: 14rem; padding: .4rem 1.8rem .4rem .65rem; background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius); font-size: .9rem; text-align: left; color: var(--text); cursor: pointer; position: relative; }
+.stat-btn span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat-btn::after { content: "\25BE"; position: absolute; right: .6rem; top: 50%; transform: translateY(-50%); color: var(--muted); }
+.stat-btn[aria-expanded="true"] { border-color: var(--accent); }
+.stat-pop { position: absolute; z-index: 25; left: 0; top: calc(100% + 4px); width: min(18rem, 82vw); padding: .45rem; background: #faf0d8; border: 1px solid var(--edge); border-radius: 8px; box-shadow: 0 8px 20px rgba(53, 33, 14, .3); }
+.stat-pop[hidden] { display: none; }
+.tools .stat-pop input { width: 100%; max-width: none; flex: none; }
+#stat-list { position: static; max-height: 12rem; margin-top: .35rem; padding: 0; overflow-y: auto; background: none; border: 0; box-shadow: none; }
+.stat-opt { display: block; }

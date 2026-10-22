@@ -19,6 +19,23 @@ function start() {
   let files = [];                    // category ids that have a data/<id>.json
   const open = new Set();            // groups currently expanded (all start collapsed)
 
+  // Always read the newest saved copy (the normal download can come from a cache that is up to a minute old).
+  async function download(path) {
+    try {
+      const r = await fetch(`${cfg.supabaseUrl.replace(/\/+$/, "")}/storage/v1/object/public/site/${path}?t=${Date.now()}`, { cache: "no-store" });
+      return r.ok ? { data: await r.blob() } : { error: { message: `${r.status} ${r.statusText}`.trim() } };
+    } catch (err) { return { error: { message: err.message || String(err) } }; }
+  }
+  // Puts a category in exactly one group (removing it from any other, such as Unsorted).
+  function placeCategory(id, name, groupId) {
+    structure.groups.forEach((g) => { g.categories = g.categories.filter((c) => c.id !== id); });
+    const grp = structure.groups.find((g) => g.id === groupId) || structure.groups.find((g) => g.id !== "unsorted") || structure.groups[0];
+    grp.categories.push({ id, name });
+    open.add(grp.id);
+    return grp;
+  }
+  const setAddGroup = (id) => { const s = $("#newgroup"); if ([...s.options].some((o) => o.value === id)) s.value = id; };
+
   sb.auth.onAuthStateChange((_event, session) => {
     const user = session?.user;
     if (!user) return location.replace("account.html?next=admin.html");
@@ -33,7 +50,7 @@ function start() {
     const { data, error } = await store.list("data", { limit: 500 });
     if (error) return msg(`Couldn't list categories: ${error.message}`);
     files = data.filter((f) => f.name.endsWith(".json")).map((f) => f.name.replace(/\.json$/, ""));
-    const dl = await store.download("config/structure.json");
+    const dl = await download("config/structure.json");
     structure = { groups: [] };
     if (!dl.error) { try { structure = JSON.parse(await dl.data.text()); } catch {} }
     structure.groups = (structure.groups || []).map((g) => ({ ...g, categories: (g.categories || []).filter((c) => files.includes(c.id)) }));
@@ -85,13 +102,13 @@ function start() {
   };
 
   // Shows what is about to be uploaded and warns about common problems before anything is replaced.
-  async function confirmPreview(id, items, file) {
+  async function confirmPreview(id, items, file, groupId) {
     const dlg = $("#preview");
     const name = findCat(id)?.c.name || pretty(id);
     const replacing = files.includes(id);
     let before = null;
     if (replacing) {
-      try { const dl = await store.download(`data/${id}.json`); if (!dl.error) before = JSON.parse(await dl.data.text()).length; } catch {}
+      try { const dl = await download(`data/${id}.json`); if (!dl.error) before = JSON.parse(await dl.data.text()).length; } catch {}
     }
     const rows = items.filter((i) => i && typeof i === "object");
     const noName = items.length - rows.filter((i) => String(i.name ?? "").trim()).length;
@@ -107,6 +124,7 @@ function start() {
     const sample = rows.slice(0, 5).map((i) => `<li>${esc(i.name ?? "(no name)")}</li>`).join("");
     $("#preview-body").innerHTML = `<h2>${replacing ? "Replace" : "Add"} ${esc(name)}?</h2>
       <p><strong>${items.length}</strong> item${items.length === 1 ? "" : "s"} in <code>${esc(file.name)}</code>${before != null ? `, replacing the current <strong>${before}</strong>` : ""}.</p>
+      ${replacing ? "" : `<p>It will be added to the group <strong>${esc((structure.groups.find((g) => g.id === groupId) || structure.groups[0])?.name || "")}</strong>.</p>`}
       ${warn.map((w) => `<p class="warn">${esc(w)}</p>`).join("")}
       ${sample ? `<p class="muted">First items:</p><ul>${sample}</ul>` : ""}`;
     $("#pv-go").disabled = !items.length;
@@ -119,11 +137,11 @@ function start() {
     });
   }
 
-  async function uploadJson(id, file) {
+  async function uploadJson(id, file, groupId) {
     let items;
     try { items = JSON.parse(await file.text()); } catch { msg("That file isn't valid JSON, so nothing was uploaded."); return false; }
     if (!Array.isArray(items)) { msg("Expected a JSON list of items (like additionalgear.json). Nothing was uploaded."); return false; }
-    if (!(await confirmPreview(id, items, file))) { msg("Upload cancelled. Nothing was changed."); return false; }
+    if (!(await confirmPreview(id, items, file, groupId))) { msg("Upload cancelled. Nothing was changed."); return false; }
     msg(`Uploading ${items.length} items...`);
     const { error } = await store.upload(`data/${id}.json`, file, { upsert: true, contentType: "application/json", cacheControl: "60" });
     if (error) { msg(`Upload failed: ${error.message}`); return false; }
@@ -139,6 +157,7 @@ function start() {
     if (act === "toggle") {
       open.has(gid) ? open.delete(gid) : open.add(gid);
       render();
+      if (open.has(gid)) setAddGroup(gid);
       $("#tree").querySelector(`.grp-toggle[data-g="${CSS.escape(gid)}"]`)?.focus();
     } else if (act === "ren-group") {
       const name = prompt("New group name:", grp.name)?.trim();
@@ -158,15 +177,7 @@ function start() {
       };
       input.click();
     } else if (act === "images") {
-      const name = findCat(id)?.c.name || pretty(id);
-      const input = Object.assign(document.createElement("input"), { type: "file", accept: "image/*", multiple: true });
-      input.onchange = async () => {
-        const list = [...input.files].filter(isImage);
-        if (!list.length) return msg("No pictures were chosen.");
-        const { done, failed } = await uploadImages(list);
-        msg(`Images for ${name}: ${done} uploaded${failed ? `, ${failed} failed. Press Image to try again.` : "."}`);
-      };
-      input.click();
+      chooseImages(findCat(id)?.c.name || pretty(id));
     } else if (act === "del-cat") {
       const { g, c } = findCat(id);
       if (!confirm(`Delete ${c.name} from the site? Images are kept.`)) return;
@@ -192,13 +203,14 @@ function start() {
   $("#expand-all").onclick = () => { structure.groups.forEach((g) => open.add(g.id)); render(); };
   $("#collapse-all").onclick = () => { open.clear(); render(); };
 
-  $("#gbtn").onclick = () => {
+  $("#gbtn").onclick = async () => {
     const name = $("#gname").value.trim(), id = slug(name);
     if (!id) return msg("Type a group name first.");
     if (structure.groups.some((g) => g.id === id)) return msg("A group with that name already exists.");
     structure.groups.push({ id, name, categories: [] });
     $("#gname").value = "";
-    saveStructure(`Group ${name} added.`);
+    await saveStructure(`Group ${name} added. New categories will go in it.`);
+    setAddGroup(id);
   };
 
   $("#newbtn").onclick = () => {
@@ -209,16 +221,27 @@ function start() {
   };
   $("#newfile").onchange = async (e) => {
     const file = e.target.files[0], name = $("#newname").value.trim(), id = slug(name);
+    const groupId = $("#newgroup").value;          // the group chosen right now, before any waiting
     e.target.value = "";
     if (!file) return;
-    const n = await uploadJson(id, file);
+    const n = await uploadJson(id, file, groupId);
     if (!n) return;
-    const grp = structure.groups.find((g) => g.id === $("#newgroup").value) || structure.groups[0];
-    grp.categories.push({ id, name });
-    open.add(grp.id);
+    const grp = placeCategory(id, name, groupId);
     $("#newname").value = "";
     saveStructure(`Saved ${n} items to ${name} in ${grp.name}.`);
   };
+
+  function chooseImages(label) {
+    const input = Object.assign(document.createElement("input"), { type: "file", accept: "image/*", multiple: true });
+    input.onchange = async () => {
+      const list = [...input.files].filter(isImage);
+      if (!list.length) return msg("No pictures were chosen.");
+      const { done, failed } = await uploadImages(list);
+      msg(`Images${label ? ` for ${label}` : ""}: ${done} uploaded${failed ? `, ${failed} failed. Press Image to try again.` : "."}`);
+    };
+    input.click();
+  }
+  $("#newimg").onclick = () => chooseImages($("#newname").value.trim());
 
   // ---- Backup and restore ----
   $("#backup").onclick = async () => {
@@ -227,7 +250,7 @@ function start() {
     const out = { app: "codex-arcane", version: 1, saved: new Date().toISOString(), structure: { groups: structure.groups.filter((g) => g.id !== "unsorted" || g.categories.length) }, categories: {} };
     let total = 0;
     for (const id of files) {
-      const dl = await store.download(`data/${id}.json`);
+      const dl = await download(`data/${id}.json`);
       if (dl.error) return msg(`Backup stopped: couldn't read ${pretty(id)} (${dl.error.message}). Nothing was downloaded.`);
       try { out.categories[id] = JSON.parse(await dl.data.text()); } catch { return msg(`Backup stopped: ${pretty(id)} isn't valid JSON.`); }
       total += out.categories[id].length;
@@ -331,6 +354,7 @@ function start() {
       if (!jsons.length && !images.length) return msg(target.mode === "images" ? "Nothing to upload. Drop image files, or a folder that has them." : "Nothing to upload. Drop a .json file here.");
       if (target.mode === "cat" && jsons.length > 1) return msg("Drop just one JSON file on a category.");
       const rowId = target.mode === "cat" ? target.id : null;
+      const groupId = $("#newgroup").value;
       const report = [];
 
       for (const file of jsons) {
@@ -351,12 +375,10 @@ function start() {
             continue;
           }
         }
-        const n = await uploadJson(id, file);
+        const n = await uploadJson(id, file, groupId);
         if (n === false) { report.push(`${file.name}: ${$("#msg").textContent}`); continue; }
-        if (!findCat(id)) {
-          const grp = structure.groups.find((g) => g.id === $("#newgroup").value) || structure.groups[0];
-          grp.categories.push({ id, name });
-          open.add(grp.id);
+        if (!replacing || !findCat(id)) {
+          placeCategory(id, name, groupId);
           $("#newname").value = "";
           await saveStructure();
         }

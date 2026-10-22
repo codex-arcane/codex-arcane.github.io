@@ -18,7 +18,9 @@ function start() {
   let structure = { groups: [] };   // saved as config/structure.json: groups -> categories
   let files = [];                    // category ids that have a data/<id>.json
   const open = new Set();            // groups currently expanded (all start collapsed)
-  let adding = null;                 // id of the group whose "Add category" form is showing
+  let busy = false;                  // true while an upload is running
+  let stagedJson = null;             // JSON file chosen for the new category (uploaded when Add category is pressed)
+  let stagedImages = [];             // pictures chosen for the new category
 
   // Always read the newest saved copy (the normal download can come from a cache that is up to a minute old).
   async function download(path) {
@@ -77,12 +79,6 @@ function start() {
   }
 
   function render() {
-    const addRow = (g) => `<li class="addrow">${adding === g.id
-      ? `<input class="newcat-name" placeholder="New category name" aria-label="New category name for ${esc(g.name)}">
-         <button type="button" class="dropbtn" data-act="newjson" data-drop="newcat" data-g="${esc(g.id)}" title="Drop a JSON file here, or press to choose one">JSON</button>
-         <button type="button" class="dropbtn" data-act="newimg" data-drop="images" data-g="${esc(g.id)}" title="Drop pictures here, or press to choose them">Image</button>
-         <button type="button" data-act="add-cancel">Cancel</button>`
-      : `<button type="button" class="add-cat" data-act="add-cat" data-g="${esc(g.id)}">+ Add category</button>`}</li>`;
     const opts = (sel) => structure.groups.map((g) => `<option value="${esc(g.id)}"${g.id === sel ? " selected" : ""}>${esc(g.name)}</option>`).join("");
     $("#tree").innerHTML = structure.groups.length
       ? structure.groups.map((g) => `
@@ -99,7 +95,7 @@ function start() {
             <button class="dropbtn" data-act="replace" data-drop="cat" data-id="${esc(c.id)}" title="Drop a JSON file here, or press to choose one" aria-label="Replace ${esc(c.name)} items: drop a JSON file here or press to choose one">JSON</button>
             <button class="dropbtn" data-act="images" data-drop="images" data-id="${esc(c.id)}" title="Drop image files or a folder here, or press to choose images" aria-label="Upload images for ${esc(c.name)}: drop image files here or press to choose them">Image</button>
             <button data-act="del-cat" data-id="${esc(c.id)}" class="danger">Delete</button></span></li>`).join("")
-          : `<li class="muted">No categories in this group yet.</li>`}${addRow(g)}</ul></div>`).join("")
+          : `<li class="muted">No categories in this group yet.</li>`}</ul></div>`).join("")
       : `<p class="muted">No groups yet. Add your first group below, for example Equipment.</p>`;
     $("#newgroup").innerHTML = opts($("#newgroup").value);
   }
@@ -183,23 +179,6 @@ function start() {
         if (n) msg(`Saved ${n} items to ${findCat(id).c.name}.`);
       };
       input.click();
-    } else if (act === "add-cat") {
-      adding = gid; open.add(gid);
-      render();
-      setAddGroup(gid);
-      $("#tree").querySelector(".newcat-name")?.focus();
-    } else if (act === "add-cancel") {
-      adding = null;
-      render();
-    } else if (act === "newjson") {
-      const name = el.closest(".addrow").querySelector(".newcat-name").value.trim();
-      if (!slug(name)) return msg("Type a category name first.");
-      if (files.includes(slug(name))) return msg("A category with that name already exists. Use its JSON button to replace it instead.");
-      const input = Object.assign(document.createElement("input"), { type: "file", accept: ".json,application/json" });
-      input.onchange = () => input.files[0] && addNewCategory(input.files[0], name, gid);
-      input.click();
-    } else if (act === "newimg") {
-      chooseImages(el.closest(".addrow").querySelector(".newcat-name").value.trim());
     } else if (act === "images") {
       chooseImages(findCat(id)?.c.name || pretty(id));
     } else if (act === "del-cat") {
@@ -233,34 +212,71 @@ function start() {
     if (structure.groups.some((g) => g.id === id)) return msg("A group with that name already exists.");
     structure.groups.push({ id, name, categories: [] });
     $("#gname").value = "";
-    open.add(id); adding = id;
-    await saveStructure(`Group ${name} added. Type a category name below to add its first category.`);
+    open.add(id);
+    await saveStructure(`Group ${name} added. Now add a category to it below.`);
     setAddGroup(id);
     $("#tree").querySelector(".newcat-name")?.focus();
   };
 
-  $("#newbtn").onclick = () => {
-    if (!slug($("#newname").value)) return msg("Type a category name first.");
-    if (!structure.groups.length) return msg("Add a group first, for example Equipment.");
-    if (files.includes(slug($("#newname").value))) return msg("A category with that name already exists. Use its JSON button to replace it instead.");
-    $("#newfile").click();
-  };
-  $("#newfile").onchange = async (e) => {
-    const file = e.target.files[0], name = $("#newname").value.trim();
-    const groupId = $("#newgroup").value;          // the group chosen right now, before any waiting
-    e.target.value = "";
-    if (!file) return;
-    await addNewCategory(file, name, groupId);
-  };
-  async function addNewCategory(file, name, groupId) {
-    const id = slug(name);
-    const n = await uploadJson(id, file, groupId);
-    if (!n) return;
-    const grp = placeCategory(id, name, groupId);
-    adding = null;
-    $("#newname").value = "";
-    saveStructure(`Saved ${n} items to ${name} in ${grp.name}.`);
+  // ---- Add a category: name + group + (optional) JSON + (optional) pictures, then press "Add category" ----
+  function showStaged() {
+    $("#newbtn").textContent = stagedJson ? "JSON \u2713" : "JSON";
+    $("#newbtn").title = stagedJson ? stagedJson.name : "Drop a JSON file here, or press to choose one";
+    $("#newimg").textContent = stagedImages.length ? `Image (${stagedImages.length})` : "Image";
+    $("#newimg").title = stagedImages.length ? `${stagedImages.length} picture(s) chosen` : "Drop image files or a folder here, or press to choose images";
   }
+  function stageJson(file) {
+    if (!file) return;
+    stagedJson = file;
+    const box = $("#newname");
+    if (!box.value.trim()) box.value = pretty(file.name.replace(/\.json$/i, ""));
+    showStaged();
+    msg(`${file.name} chosen. Press Add category to save it.`);
+  }
+  function stageImages(list) {
+    const pics = list.filter(isImage);
+    if (!pics.length) return msg("No pictures were chosen.");
+    stagedImages = pics;
+    showStaged();
+    msg(`${pics.length} picture${pics.length > 1 ? "s" : ""} chosen. Press Add category to upload ${pics.length > 1 ? "them" : "it"}.`);
+  }
+  const pick = (accept, multiple, cb) => {
+    const input = Object.assign(document.createElement("input"), { type: "file", accept, multiple });
+    input.onchange = () => cb([...input.files]);
+    input.click();
+  };
+  $("#newbtn").onclick = () => pick(".json,application/json", false, (f) => stageJson(f[0]));
+  $("#newimg").onclick = () => pick("image/*", true, stageImages);
+
+  $("#addcat").onclick = async () => {
+    if (busy) return msg("Still uploading. Wait for it to finish.");
+    const name = $("#newname").value.trim(), id = slug(name), groupId = $("#newgroup").value;
+    if (!id) return msg("Type a category name first.");
+    if (!structure.groups.length || !groupId) return msg("Add a group first, for example Equipment.");
+    if (files.includes(id)) return msg("A category with that name already exists. Use its JSON button in the list to replace it instead.");
+    busy = true;
+    try {
+      if (stagedJson) {
+        if (!(await uploadJson(id, stagedJson, groupId))) return;
+      } else {
+        // No JSON chosen: create the category empty so it is registered in its group right away.
+        const { error } = await store.upload(`data/${id}.json`, new Blob(["[]"], { type: "application/json" }), { upsert: true, contentType: "application/json", cacheControl: "60" });
+        if (error) return msg(`Couldn't create the category: ${error.message}`);
+        files.push(id);
+      }
+      const grp = placeCategory(id, name, groupId);
+      let extra = "";
+      if (stagedImages.length) {
+        const { done, failed } = await uploadImages(stagedImages);
+        extra = ` Images: ${done} uploaded${failed ? `, ${failed} failed` : ""}.`;
+      }
+      stagedJson = null; stagedImages = [];
+      $("#newname").value = "";
+      showStaged();
+      await saveStructure(`${name} added to ${grp.name}.${extra}`);
+      setAddGroup(grp.id);
+    } finally { busy = false; }
+  };
 
   function chooseImages(label) {
     const input = Object.assign(document.createElement("input"), { type: "file", accept: "image/*", multiple: true });
@@ -272,57 +288,6 @@ function start() {
     };
     input.click();
   }
-  $("#newimg").onclick = () => chooseImages($("#newname").value.trim());
-
-  // ---- Backup and restore ----
-  $("#backup").onclick = async () => {
-    if (!files.length) return msg("There are no categories to back up yet.");
-    msg("Collecting your data...");
-    const out = { app: "codex-arcane", version: 1, saved: new Date().toISOString(), structure: { groups: structure.groups.filter((g) => g.id !== "unsorted" || g.categories.length) }, categories: {} };
-    let total = 0;
-    for (const id of files) {
-      const dl = await download(`data/${id}.json`);
-      if (dl.error) return msg(`Backup stopped: couldn't read ${pretty(id)} (${dl.error.message}). Nothing was downloaded.`);
-      try { out.categories[id] = JSON.parse(await dl.data.text()); } catch { return msg(`Backup stopped: ${pretty(id)} isn't valid JSON.`); }
-      total += out.categories[id].length;
-      msg(`Collecting... ${Object.keys(out.categories).length}/${files.length}`);
-    }
-    const link = Object.assign(document.createElement("a"), {
-      href: URL.createObjectURL(new Blob([JSON.stringify(out)], { type: "application/json" })),
-      download: `codex-arcane-backup-${new Date().toISOString().slice(0, 10)}.json`,
-    });
-    document.body.append(link); link.click(); link.remove();
-    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
-    msg(`Backup downloaded: ${files.length} categories, ${total} items. Pictures are not included.`);
-  };
-
-  $("#restore").onclick = () => $("#restorefile").click();
-  $("#restorefile").onchange = async (e) => {
-    const file = e.target.files[0];
-    e.target.value = "";
-    if (!file) return;
-    let data;
-    try { data = JSON.parse(await file.text()); } catch { return msg("That file isn't valid JSON. Nothing was restored."); }
-    const ids = data && data.app === "codex-arcane" && data.categories && typeof data.categories === "object" ? Object.keys(data.categories) : null;
-    if (!ids) return msg("That doesn't look like a Codex Arcane backup file. Nothing was restored.");
-    if (ids.some((id) => !/^[A-Za-z0-9_-]+$/.test(id) || !Array.isArray(data.categories[id]))) return msg("The backup file has a category that can't be read. Nothing was restored.");
-    const total = ids.reduce((n, id) => n + data.categories[id].length, 0);
-    const clash = ids.filter((id) => files.includes(id)).length;
-    if (!confirm(`Restore ${ids.length} categories (${total} items) from ${file.name}?${clash ? `\n\n${clash} of them already exist and will be replaced.` : ""}\n\nMake a fresh backup first if you aren't sure.`)) return msg("Restore cancelled. Nothing was changed.");
-    let done = 0;
-    for (const id of ids) {
-      const { error } = await store.upload(`data/${id}.json`, new Blob([JSON.stringify(data.categories[id])], { type: "application/json" }), { upsert: true, contentType: "application/json", cacheControl: "60" });
-      if (error) return msg(`Restore stopped at ${pretty(id)}: ${error.message}. ${done} categories were restored before that.`);
-      msg(`Restoring... ${++done}/${ids.length}`);
-    }
-    if (data.structure && Array.isArray(data.structure.groups)) {
-      const { error } = await store.upload("config/structure.json", new Blob([JSON.stringify(data.structure)], { type: "application/json" }), { upsert: true, contentType: "application/json", cacheControl: "30" });
-      if (error) msg(`Items were restored, but the menu layout wasn't: ${error.message}`);
-    }
-    await load();
-    msg(`Restored ${ids.length} categories (${total} items).`);
-  };
-
   // ---- Images: one folder for all categories ----
   const isImage = (f) => /\.(webp|png|jpe?g|gif|svg)$/i.test(f.name);
 
@@ -342,7 +307,7 @@ function start() {
 
   // ---- Drag and drop: JSON files and images (single files or whole folders) ----
   const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
-  let depth = 0, busy = false;
+  let depth = 0;
 
   function endDrag() {
     depth = 0;
@@ -375,6 +340,14 @@ function start() {
 
   // target: { mode: "cat", id } (replace one category), { mode: "new" } (add a category) or { mode: "images" }
   async function handleDrop(dt, target) {
+    if (target.mode === "stage-json" || target.mode === "stage-img") {
+      const got = await filesFromDrop(dt);
+      if (target.mode === "stage-json") {
+        const j = got.filter((f) => /\.json$/i.test(f.name));
+        return j.length ? stageJson(j[0]) : msg("Nothing to use. Drop a .json file here.");
+      }
+      return stageImages(got);
+    }
     if (busy) return msg("Still uploading the last drop. Wait for it to finish, then drop again.");
     busy = true;
     try {
@@ -385,7 +358,7 @@ function start() {
       if (!jsons.length && !images.length) return msg(target.mode === "images" ? "Nothing to upload. Drop image files, or a folder that has them." : "Nothing to upload. Drop a .json file here.");
       if (target.mode === "cat" && jsons.length > 1) return msg("Drop just one JSON file on a category.");
       const rowId = target.mode === "cat" ? target.id : null;
-      const groupId = target.group || $("#newgroup").value;
+      const groupId = $("#newgroup").value;
       const report = [];
 
       for (const file of jsons) {
@@ -395,7 +368,7 @@ function start() {
           name = findCat(id)?.c.name || pretty(id);
           replacing = true;
         } else {                                       // new category, named after the file (or the name box if filled in)
-          name = (jsons.length === 1 && ((target.nameInput ? target.nameInput.value : $("#newname").value).trim())) || pretty(file.name.replace(/\.json$/i, ""));
+          name = (jsons.length === 1 && ($("#newname").value.trim())) || pretty(file.name.replace(/\.json$/i, ""));
           id = slug(name);
           if (!id) { report.push(`Skipped ${file.name}: couldn't make a category name from it.`); continue; }
           if (files.includes(id)) {
@@ -410,7 +383,6 @@ function start() {
         if (n === false) { report.push(`${file.name}: ${$("#msg").textContent}`); continue; }
         if (!replacing || !findCat(id)) {
           placeCategory(id, name, groupId);
-          adding = null;
           $("#newname").value = "";
           await saveStructure();
         }
@@ -435,7 +407,6 @@ function start() {
     const b = e.target.closest?.(".dropbtn[data-drop]");
     if (!b) return null;
     if (b.dataset.drop === "cat") return { mode: "cat", id: b.dataset.id };
-    if (b.dataset.drop === "newcat") return { mode: "new", group: b.dataset.g, nameInput: b.closest(".addrow")?.querySelector(".newcat-name") };
     return { mode: b.dataset.drop };
   };
   window.addEventListener("dragenter", (e) => {

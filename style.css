@@ -456,3 +456,11 @@ body.dragging .admin .dropbtn { border-width: 2px; background: rgba(252, 241, 21
 .stat-opt { display: block; }
 
 .admin .grp-pick { display: inline-flex; align-items: center; gap: .35rem; margin: 0; color: var(--muted); font-size: .85rem; }
+
+/* Item popup: info chips and tables for scraped sections */
+dialog .info { display: flex; flex-wrap: wrap; gap: .35rem; margin: .45rem 0 0; }
+dialog .info span { padding: .05rem .5rem; background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius); font-size: .82rem; color: var(--muted); }
+dialog .tbl { overflow-x: auto; margin: .3rem 0 .6rem; }
+dialog .tbl table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+dialog .tbl th, dialog .tbl td { text-align: left; padding: .28rem .5rem; border-bottom: 1px solid var(--edge); vertical-align: top; }
+dialog .tbl th { color: var(--accent); font-weight: 700; white-space: nowrap; }

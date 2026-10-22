@@ -55,6 +55,8 @@ self.addEventListener("fetch", (e) => {
   if (url.origin === location.origin) {
     if (/\/(admin|account)\.(html|js)$/.test(path)) return;           // owner and sign-in pages are never cached
     e.respondWith(networkFirst(req, SHELL));
+  } else if (url.searchParams.has("t")) {
+    return;                                                              // the owner panel's always-fresh reads (see admin.js)
   } else if (path.includes("/storage/v1/object/public/site/images/")) {
     e.respondWith(cacheFirst(req, IMG, MAX_IMAGES));
   } else if (path.includes("/storage/v1/object/public/site/")) {

@@ -39,10 +39,12 @@
       </div>
 
       <h3>Add a category</h3>
+      <p class="muted">Type a name, pick the group it belongs to, then drop or choose its <strong>JSON</strong> file. The <strong>Image</strong> button uploads its pictures.</p>
       <div class="row-add">
         <input id="newname" placeholder="Category name, e.g. Additional Gear" aria-label="New category name">
-        <select id="newgroup" aria-label="Group for the new category"></select>
-        <button id="newbtn" class="dropbtn" data-drop="new">Drop or choose JSON</button>
+        <label class="grp-pick">Group <select id="newgroup" aria-label="Group for the new category"></select></label>
+        <button id="newbtn" class="dropbtn" data-drop="new" type="button" title="Drop a JSON file here, or press to choose one">JSON</button>
+        <button id="newimg" class="dropbtn" data-drop="images" type="button" title="Drop image files or a folder here, or press to choose images">Image</button>
         <input id="newfile" type="file" accept=".json,application/json" hidden>
       </div>
     </section>

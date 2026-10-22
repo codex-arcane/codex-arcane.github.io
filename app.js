@@ -466,6 +466,41 @@ $("#stat-q").onkeydown = (e) => {
 $("#stat-list").onclick = (e) => { const b = e.target.closest(".stat-opt"); if (b) chooseStat(b.dataset.stat); };
 document.addEventListener("click", (e) => { if (!e.target.closest(".statpick")) closeStat(); });
 
+// ---- Content-aware popup: the scraper saves every part of an item. Parts with a special layout (stats,
+// recipe, where to get it) are drawn above; every other part is drawn automatically by its shape. ----
+const SPECIAL_SECTIONS = new Set(["Stat/Effect", "Obtained From", "Recipe"]);
+function tableHtml(cols, rows) {
+  return `<div class="tbl"><table><thead><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${
+    rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+function sectionHtml(name, sec) {
+  const recs = sec.records || [];
+  let body = "";
+  if (recs.length && recs.every((r) => !r.values)) {
+    const cols = [...new Set(recs.flatMap((r) => Object.keys(r)))].filter((c) => recs.some((r) => r[c]));
+    body = tableHtml(cols, recs.map((r) => cols.map((c) => r[c] ?? "")));
+  } else if (recs.length) {
+    body = `<ul>${recs.map((r) => `<li>${esc((r.values || []).filter(Boolean).join(" - "))}</li>`).join("")}</ul>`;
+  } else if (sec.text) {
+    const t = sec.text.startsWith(name) ? sec.text.slice(name.length).trim() : sec.text;
+    body = t ? `<p>${esc(t)}</p>` : "";
+  }
+  return body ? `<h3>${esc(name.replace(/\s*\(\d+\)$/, ""))}</h3>${body}` : "";
+}
+function pageHtml(p) {  // a captured page (tool, menu...) has no item layout: show its tables and text
+  const tables = (p.tables || []).filter((t) => t.length > 1).slice(0, 5)
+    .map((t) => tableHtml(t[0], t.slice(1, 61).map((r) => t[0].map((_, k) => r[k] ?? ""))));
+  const text = (p.text || "").slice(0, 1500);
+  return tables.join("") + (text ? `<p class="muted">${esc(text)}${p.text.length > 1500 ? "\u2026" : ""}</p>` : "");
+}
+function extraHtml(item) {
+  let out = "";
+  for (const [name, sec] of Object.entries(item.sections || {})) {
+    if (!SPECIAL_SECTIONS.has(name) && !name.includes("Community Gallery")) out += sectionHtml(name, sec);
+  }
+  return out + (item.page ? pageHtml(item.page) : "");
+}
+
 // ---- Item popup, with links and compare ----
 const compare = [];  // up to two {item, cat}
 function detail(item, cat = catOf(item), { hash = true } = {}) {
@@ -477,12 +512,18 @@ function detail(item, cat = catOf(item), { hash = true } = {}) {
   if (r.fee) pts.push(`<li>Fee: ${esc(r.fee)}</li>`);
   const stats = (item.stats || []).map((s) => `<li>${esc(s)}</li>`);
   if (item.base_def != null) stats.unshift(`<li>Base DEF: ${item.base_def}</li>`);
+  const kind = item.type && item.type.toLowerCase() !== cat.name.toLowerCase() ? [item.type] : [];
+  const info = kind.concat(Object.entries(item.info || {}).map(([k, v]) => `${k}: ${v}`));
+  const chips = info.length ? `<div class="info">${info.map((t) => `<span>${esc(t)}</span>`).join("")}</div>` : "";
   $("#dlg-body").innerHTML = `
-    <div class="head">${src ? `<img src="${src}" alt="">` : ""}<div><h2>${esc(item.name)}</h2><p class="muted from-cat">${esc(cat.name)}</p>${(item.obtain_types || []).map((t) => `<span class="badge">${esc(t)}</span>`).join("")}</div></div>
+    <div class="head">${src ? `<img src="${src}" alt="">` : ""}<div><h2>${esc(item.name)}</h2><p class="muted from-cat">${esc(cat.name)}</p>${(item.obtain_types || []).map((t) => `<span class="badge">${esc(t)}</span>`).join("")}${chips}</div></div>
     ${item.dyes?.length ? `<h3>Dyes</h3><div class="dyes">${dyeChips(item)}</div>` : ""}
     ${stats.length ? `<h3>Stats</h3>${list(stats)}` : ""}
     ${mats.length || pts.length ? `<h3>Recipe</h3>${list(mats.concat(pts))}` : ""}
-    ${item.obtained_from?.text ? `<h3>Obtained from</h3><p>${esc(item.obtained_from.text)}</p>` : ""}`;
+    ${item.obtained_from?.rows?.length
+      ? `<h3>Obtained from</h3>${tableHtml(["Source", "Where"], item.obtained_from.rows.map((o) => [o.source, o.map]))}`
+      : item.obtained_from?.text ? `<h3>Obtained from</h3><p>${esc(item.obtained_from.text)}</p>` : ""}
+    ${extraHtml(item)}`;
   const actions = document.createElement("div");
   actions.className = "dlg-actions";
   const btn = (text, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "fav"; b.textContent = text; b.onclick = fn; actions.append(b); return b; };

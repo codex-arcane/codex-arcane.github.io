@@ -456,9 +456,3 @@ body.dragging .admin .dropbtn { border-width: 2px; background: rgba(252, 241, 21
 .stat-opt { display: block; }
 
 .admin .grp-pick { display: inline-flex; align-items: center; gap: .35rem; margin: 0; color: var(--muted); font-size: .85rem; }
-
-/* "+ Add category" inside each group */
-.rows li.addrow { background: none; border: 1px dashed var(--edge); box-shadow: none; flex-wrap: wrap; }
-.admin .add-cat { background: none; border: 0; color: var(--accent); font-weight: 600; padding: .25rem .1rem; }
-.admin .add-cat:hover { text-decoration: underline; }
-.rows li.addrow .newcat-name { flex: 1 1 12rem; min-width: 0; }

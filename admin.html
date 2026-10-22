@@ -39,13 +39,13 @@
       </div>
 
       <h3>Add a category</h3>
-      <p class="muted">Type a name, pick the group it belongs to, then drop or choose its <strong>JSON</strong> file. The <strong>Image</strong> button uploads its pictures.</p>
+      <p class="muted">Type a name, pick the group it belongs to, then choose its <strong>JSON</strong> file and any <strong>Image</strong> files (both optional, you can also drop them on the buttons). Press <strong>Add category</strong> to register it in that group.</p>
       <div class="row-add">
         <input id="newname" placeholder="Category name, e.g. Additional Gear" aria-label="New category name">
         <label class="grp-pick">Group <select id="newgroup" aria-label="Group for the new category"></select></label>
-        <button id="newbtn" class="dropbtn" data-drop="new" type="button" title="Drop a JSON file here, or press to choose one">JSON</button>
-        <button id="newimg" class="dropbtn" data-drop="images" type="button" title="Drop image files or a folder here, or press to choose images">Image</button>
-        <input id="newfile" type="file" accept=".json,application/json" hidden>
+        <button id="newbtn" class="dropbtn" data-drop="stage-json" type="button" title="Drop a JSON file here, or press to choose one">JSON</button>
+        <button id="newimg" class="dropbtn" data-drop="stage-img" type="button" title="Drop image files or a folder here, or press to choose images">Image</button>
+        <button id="addcat" type="button" class="primary">Add category</button>
       </div>
     </section>
 

@@ -200,6 +200,9 @@ body.dragging #dropbanner { display: block; }
 /* Menu button, drawer, search, owner panel groups */
 .icon-btn { flex: none; display: grid; place-items: center; width: 42px; height: 42px; padding: 0; background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius); color: var(--text); cursor: pointer; }
 .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+.icon-btn.spinning svg { animation: data-refresh-spin .7s linear infinite; }
+.icon-btn:disabled { opacity: .6; cursor: wait; }
+@keyframes data-refresh-spin { to { transform: rotate(360deg); } }
 .titlebar .page-label { margin-right: auto; }
 .top-actions { margin-left: auto; display: flex; gap: .5rem; align-items: center; }
 .btn { display: inline-block; padding: .4rem .9rem; background: var(--accent); color: var(--on-accent) !important; border: 1px solid var(--accent); border-radius: var(--radius); text-decoration: none; font-weight: 700; white-space: nowrap; }

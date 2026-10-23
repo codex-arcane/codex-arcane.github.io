@@ -19,16 +19,56 @@ function setCache(cat, items) {
   for (const i of items) itemCat.set(i, cat);
   return (state.cache[cat.id] = items);
 }
-async function loadItems(cat) {
+async function loadItems(cat, { force = false } = {}) {
+  if (force) delete state.cache[cat.id];
   if (!state.cache[cat.id]) {
-    const lists = await Promise.all(cat.files.map((f) => fetch(f).then((r) => r.json())));
+    const lists = await Promise.all(cat.files.map((f) =>
+      fetch(f, { cache: force ? "no-cache" : "default" }).then((r) => {
+        if (!r.ok) throw new Error(`${f} ${r.status}`);
+        return r.json();
+      })));
     setCache(cat, lists.flat());
     rebuildNameIndex(); // keep drop/material links up to date as categories load
   }
   return state.cache[cat.id];
 }
-const loadAll = () => Promise.all(state.cats.map(loadItems)).catch(() => {});
+const loadAll = (opts) => Promise.all(state.cats.map((c) => loadItems(c, opts || {}))).catch(() => {});
 const findItem = (catId, itemId) => (state.cache[catId] || []).find((i) => String(i.id) === String(itemId));
+
+/** Reload category JSON from the server (or local data/). Does not scrape Coryn. */
+async function refreshData() {
+  const btn = $("#data-refresh");
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add("spinning");
+  }
+  try {
+    state.cache = {};
+    if (typeof nameIndex !== "undefined" && nameIndex.clear) nameIndex.clear();
+    if (remote) {
+      Object.assign(state, await loadRemote());
+    } else {
+      const res = await fetch("data/manifest.json", { cache: "no-cache" });
+      if (!res.ok) throw new Error(res.status);
+      state.cats = (await res.json()).categories;
+      state.groups = [{ id: "all", name: "All", cats: state.cats }];
+    }
+    await loadAll({ force: true });
+    rebuildNameIndex();
+    renderMenu();
+    await route();
+  } catch (e) {
+    console.error(e);
+    empty(remote
+      ? "Couldn't refresh data. Check your connection and Supabase setup."
+      : "Couldn't refresh data. Check data/manifest.json.");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove("spinning");
+    }
+  }
+}
 
 const favKey = (i, cat = catOf(i)) => `${cat.id}:${i.id}`;
 const isFav = (i, cat = catOf(i)) => prefs.favs.includes(favKey(i, cat));
@@ -1022,6 +1062,8 @@ $("#gs").onkeydown = (e) => {
 };
 $("#gs-results").onclick = (e) => { const b = e.target.closest(".gs-row"); if (b) openHit(Number(b.dataset.n)); };
 document.addEventListener("click", (e) => { if (!e.target.closest(".gsearch")) $("#gs-results").hidden = true; });
+const dataRefreshBtn = $("#data-refresh");
+if (dataRefreshBtn) dataRefreshBtn.onclick = () => refreshData();
 
 // Account area. Signing in is optional: guests just see a reminder.
 function showAccount() {

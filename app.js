@@ -507,23 +507,26 @@ document.addEventListener("click", (e) => { if (!e.target.closest(".statpick")) 
 const SPECIAL_SECTIONS = new Set(["Stat/Effect", "Obtained From", "Recipe", "Appearance"]);
 const DROP_PAGE = 8;
 
-// Exact name / id lookup only (no fuzzy match — that was sending clicks to the wrong item).
+// Exact name lookup only. Coryn reuses numeric ids across types (monster id 145 ≠ item id 145),
+// so we never open a link from id alone without checking the name matches.
 const nameIndex = new Map(); // exact lowercased name → {item, cat}
-const idIndex = new Map();   // String(id) → {item, cat} (first category that has it)
 function rebuildNameIndex() {
   nameIndex.clear();
-  idIndex.clear();
   for (const cat of state.cats) {
     for (const i of state.cache[cat.id] || []) {
       const key = (i.name || "").trim().toLowerCase();
       if (key && !nameIndex.has(key)) nameIndex.set(key, { item: i, cat });
-      if (i.id != null && !idIndex.has(String(i.id))) idIndex.set(String(i.id), { item: i, cat });
     }
   }
 }
-function resolveById(id) {
-  if (id == null || id === "") return null;
-  return idIndex.get(String(id)) || null;
+function namesMatch(cellText, itemName) {
+  const a = String(cellText || "").trim().toLowerCase();
+  const b = String(itemName || "").trim().toLowerCase();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  // Allow "Name (Lv 145)" cell to match item stored as "Name"
+  const stripLv = (s) => s.replace(/\s*\(lv\.?\s*\d+\)\s*$/i, "").trim();
+  return stripLv(a) === b || a === stripLv(b) || stripLv(a) === stripLv(b);
 }
 function resolveLink(name) {
   if (!name || typeof name !== "string") return null;
@@ -531,17 +534,27 @@ function resolveLink(name) {
   if (!raw) return null;
   const key = raw.toLowerCase();
   if (nameIndex.has(key)) return nameIndex.get(key);
-  // Drop tables often append " (Lv N)" — try exact name without that suffix only.
   const noLv = key.replace(/\s*\(lv\.?\s*\d+\)\s*$/i, "").trim();
   if (noLv && noLv !== key && nameIndex.has(noLv)) return nameIndex.get(noLv);
-  // No soft / prefix / "contains" matching — wrong targets are worse than no link.
+  return null;
+}
+// Optional id: only accepted if some item with that id also has the same name as the cell.
+function resolveByIdAndName(id, name) {
+  if (id == null || id === "" || !name) return null;
+  const sid = String(id);
+  for (const cat of state.cats) {
+    for (const i of state.cache[cat.id] || []) {
+      if (String(i.id) !== sid) continue;
+      if (namesMatch(name, i.name)) return { item: i, cat };
+    }
+  }
   return null;
 }
 function linkCell(text, { id = null } = {}) {
   const t = String(text ?? "").trim();
   if (!t) return "";
-  // Prefer a real Coryn id when the scraper saved one (source_id / map_id / …).
-  const hit = (id != null && resolveById(id)) || resolveLink(t);
+  // Name first (safe). Id only confirms the same-named entry (avoids monster id → random armor).
+  const hit = resolveLink(t) || resolveByIdAndName(id, t);
   if (hit) {
     return `<button type="button" class="cell-link" data-cat="${esc(hit.cat.id)}" data-id="${esc(String(hit.item.id))}">${esc(t)}</button>`;
   }

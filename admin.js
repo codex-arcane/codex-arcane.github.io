@@ -342,18 +342,54 @@ function start() {
   async function handleDrop(dt, target) {
     if (target.mode === "stage-json" || target.mode === "stage-img") {
       const got = await filesFromDrop(dt);
-      if (target.mode === "stage-json") {
-        const j = got.filter((f) => /\.json$/i.test(f.name));
-        return j.length ? stageJson(j[0]) : msg("Nothing to use. Drop a .json file here.");
+      if (target.mode === "stage-img") return stageImages(got);
+      // Whole scraper output folder (many JSON + images) → bulk upload
+      const j = got.filter((f) => /\.json$/i.test(f.name) && !/needs_review/i.test(f.name));
+      const imgs = got.filter(isImage);
+      if (j.length > 1 || (j.length >= 1 && imgs.length > 0)) {
+        if (busy) return msg("Still uploading the last drop. Wait for it to finish, then drop again.");
+        busy = true;
+        try {
+          const groupId = $("#newgroup").value;
+          const report = [];
+          for (const file of j) {
+            let name = pretty(file.name.replace(/\.json$/i, "").replace(/^items_/, "").replace(/^monsters_/, "").replace(/^maps_/, "").replace(/^quests_/, ""));
+            let id = slug(name);
+            if (!id) { report.push(`Skipped ${file.name}`); continue; }
+            const exists = files.includes(id);
+            if (exists && !confirm(`${name} already exists. Replace with ${file.name}?`)) {
+              report.push(`Skipped ${file.name}`); continue;
+            }
+            const n = await uploadJson(id, file, groupId);
+            if (n === false) { report.push(`${file.name}: cancelled or failed`); continue; }
+            if (!exists || !findCat(id)) {
+              if (!structure.groups.length) { report.push(`Skipped ${file.name}: add a group first`); continue; }
+              placeCategory(id, name, groupId);
+              await saveStructure();
+            }
+            report.push(`${exists ? "Updated" : "Added"} ${name} (${n} items).`);
+          }
+          if (imgs.length) {
+            const { done, failed } = await uploadImages(imgs);
+            report.push(`Images: ${done} uploaded${failed ? `, ${failed} failed` : ""}.`);
+          }
+          msg(report.join(" ") || "Nothing uploaded.");
+        } catch (err) {
+          msg(`Something went wrong: ${err.message || err}`);
+        } finally {
+          busy = false;
+        }
+        return;
       }
-      return stageImages(got);
+      if (j.length === 1) return stageJson(j[0]);
+      return msg("Nothing to use. Drop a .json file, or the whole scraper output folder.");
     }
     if (busy) return msg("Still uploading the last drop. Wait for it to finish, then drop again.");
     busy = true;
     try {
       msg("Reading dropped files...");
       const dropped = await filesFromDrop(dt);
-      const jsons = target.mode === "images" ? [] : dropped.filter((f) => /\.json$/i.test(f.name));
+      const jsons = target.mode === "images" ? [] : dropped.filter((f) => /\.json$/i.test(f.name) && !/needs_review/i.test(f.name));
       const images = target.mode === "images" ? dropped.filter(isImage) : [];
       if (!jsons.length && !images.length) return msg(target.mode === "images" ? "Nothing to upload. Drop image files, or a folder that has them." : "Nothing to upload. Drop a .json file here.");
       if (target.mode === "cat" && jsons.length > 1) return msg("Drop just one JSON file on a category.");

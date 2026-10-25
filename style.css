@@ -637,62 +637,82 @@ dialog.dlg-wide #dlg-body { max-height: calc(92vh - 5rem); overflow-y: auto; }
 .sk-wicon { width: 22px; height: 22px; object-fit: contain; border-radius: 4px; background: rgba(0,0,0,.04); border: 1px solid var(--edge); }
 .sk-weapon-text { line-height: 1.3; }
 
-/* ===== Skill pages: same layout, sizes and colours as the Obsidian (dataviewjs) reference ===== */
+/* ===== Skill pages: reference layout, painted with the site's parchment theme ===== */
 #items.skills-page { display: block; max-width: 56rem; }
 body.skill-view #more, main:has(#items.skills-page) #more { display: none !important; }
-.sk-page { background: #121212; color: #ddd; font-size: 16px; line-height: 1.4; padding: 12px; border: 1px solid #333; border-radius: 8px; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
-.sk-page + .sk-page { margin-top: 14px; }
-.sk-page b, .sk-page strong { color: #fff; }
-.sk-tree-head { margin-bottom: 12px; }
-.sk-tree-label { margin: 0; font-size: .72em; letter-spacing: .12em; text-transform: uppercase; color: #5bc0de; font-weight: 700; }
-.sk-tree-title { margin: .1em 0 0; font: 700 1.6em/1.15 var(--display); color: #fff; }
-.sk-tree-sub { margin: .15em 0 0; font-size: .85em; color: #aaa; }
-.sk-page .sk-search { display: block; width: 100%; height: 28px; margin: 0 0 12px; padding: 4px 10px; background: #000; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: .85em; outline: none; }
-.sk-page .sk-search::placeholder { color: #888; }
-.sk-page .sk-list { display: block; }
-.sk-page .sk-acc { border: 1px solid #444; margin-bottom: 8px; border-radius: 4px; background: #1c1c1c; overflow: hidden; }
+.sk-page { --in-w: 110px; color: var(--text); font-size: 15px; line-height: 1.4; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+.sk-page + .sk-page { margin-top: 18px; }
+.sk-tree-head { margin-bottom: .7rem; }
+.sk-tree-label { margin: 0; font-size: .72em; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
+.sk-tree-title { margin: .1em 0 0; font: 700 1.7em/1.15 var(--display); }
+.sk-tree-sub { margin: .15em 0 0; font-size: .85em; color: var(--muted); }
+.sk-page .sk-search { display: block; width: 100%; height: 32px; margin: 0 0 .8rem; padding: 4px 10px; border: 1px solid var(--edge); border-radius: var(--radius); background: var(--panel); color: var(--text); font-size: .9em; }
+.sk-page .sk-search::placeholder { color: var(--muted); opacity: .8; }
+.sk-page .sk-list { display: flex; flex-direction: column; gap: 8px; }
+.sk-page .sk-acc { border: 1px solid var(--edge); border-radius: var(--radius); background: var(--panel); overflow: hidden; min-width: 0; }
 .sk-page .sk-acc[hidden] { display: none; }
-.sk-page .sk-acc-trig { width: 100%; display: flex; align-items: center; min-height: 46px; padding: 6px 12px; border: 0; border-bottom: 1px solid #333; border-radius: 0; background: #252525; color: #fff; cursor: pointer; text-align: left; font: inherit; }
-.sk-page .sk-acc-trig.active { border-bottom: 2px solid #660000; }
-.sk-page .sk-icon-box { width: 34px; height: 34px; margin: 0 10px 0 0; flex: none; display: flex; align-items: center; justify-content: center; border: 1px solid #444; background: #000; }
+.sk-page .sk-acc-trig { width: 100%; display: flex; align-items: center; gap: 10px; min-height: 46px; padding: 6px 12px; border: 0; border-bottom: 1px solid transparent; background: rgba(122, 74, 20, .08); color: var(--text); cursor: pointer; text-align: left; font: inherit; }
+.sk-page .sk-acc-trig:hover { background: rgba(122, 74, 20, .15); }
+.sk-page .sk-acc-trig.active { border-bottom: 2px solid var(--accent); background: rgba(122, 74, 20, .14); }
+.sk-page .sk-icon-box { width: 34px; height: 34px; margin: 0; flex: none; display: flex; align-items: center; justify-content: center; border: 1px solid var(--edge); border-radius: 4px; background: rgba(255, 250, 236, .7); }
 .sk-page .sk-icon-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
-.sk-page .sk-acc-title { flex-grow: 1; min-width: 0; font-weight: 700; font-size: .95em; color: #fff; }
-.sk-page .wpn-requirement { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; flex: none; max-width: 48%; }
-.sk-page .wpn-icons-row { display: flex; gap: 3px; }
+.sk-page .sk-acc-title { flex: 1; min-width: 0; font-weight: 700; font-size: 1em; overflow-wrap: anywhere; }
+.sk-page .wpn-requirement { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; flex: none; max-width: 46%; }
+.sk-page .wpn-icons-row { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 3px; }
 .sk-page .wpn-icon-small { width: 18px; height: 18px; object-fit: contain; display: block; flex: none; }
-.sk-page .avail-text { font-size: .65em; color: #aaa; text-align: right; line-height: 1; }
-.sk-page .sk-acc-body { padding: 12px; }
+.sk-page .avail-text { font-size: .68em; color: var(--muted); text-align: right; line-height: 1.1; overflow-wrap: anywhere; }
+.sk-page .sk-acc-body { padding: 12px; border-top: 1px solid var(--edge); min-width: 0; overflow-wrap: anywhere; }
 .sk-page .sk-acc-body[hidden] { display: none; }
-.sk-page .sk-info-grid { display: grid; grid-template-columns: 100px 1fr 100px 1fr; gap: 4px; font-size: .8em; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #333; color: #ddd; }
-.sk-page .sk-label { color: #5bc0de; font-weight: 700; }
-.sk-page .sk-val { color: #ddd; min-width: 0; }
-.sk-page .sk-desc { display: block; margin: 0 0 10px; color: #eee; font-size: .85em; line-height: 1.4; }
-.sk-page .sk-spec { margin: 10px 0; padding: 10px; border: 1px solid #333; border-radius: 5px; background: #151515; }
-.sk-page .sk-spec-title { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; color: #5bc0de; font-weight: 700; font-size: .9em; }
+.sk-page .sk-info-grid { display: grid; grid-template-columns: 100px minmax(0, 1fr) 100px minmax(0, 1fr); gap: 4px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--edge); font-size: .86em; }
+.sk-page .sk-label { color: var(--accent); font-weight: 700; }
+.sk-page .sk-val { color: var(--text); min-width: 0; }
+.sk-page .sk-desc { display: block; margin: 0 0 10px; font-size: .92em; line-height: 1.45; }
+.sk-page .sk-specs { margin: 10px 0; }
+.sk-page .sk-spec { margin-bottom: 8px; padding: 10px; border: 1px solid var(--edge); border-radius: 5px; background: rgba(255, 250, 236, .5); }
+.sk-page .sk-spec-title { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; color: var(--accent); font-weight: 700; font-size: .95em; }
 .sk-page .sk-spec-title img[hidden] { display: none; }
-.sk-page .sk-spec-body { margin-bottom: 8px; color: #ddd; font-size: .85em; }
-.sk-page .sk-calc-ui { margin-top: 8px; padding: 12px; border-radius: 4px; border-left: 3px solid #4e73df; background: #1a1a1a; color: #ddd; font-size: .85em; font-weight: 700; line-height: 1.4; }
+.sk-page .sk-spec-body { font-size: .9em; line-height: 1.45; }
+.sk-page .sk-calc-ui { margin-top: 8px; padding: 12px; border: 1px solid var(--edge); border-left: 3px solid var(--accent); border-radius: 4px; background: rgba(255, 250, 236, .6); font-size: .9em; font-weight: 400; min-width: 0; }
 .sk-page .sk-calc-ui details { display: block; margin: 0; }
 .sk-page .sk-calc-ui summary { display: none; }
-.sk-page .sk-calc-ui .calc-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px; }
+.sk-page .sk-calc-ui b, .sk-page .sk-calc-ui strong { font-weight: 700; }
+/* every label + box row: label on the left, boxes all the same size in one column on the right */
+.sk-page .sk-calc-ui .calc-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px; font-weight: 700; }
 .sk-page .sk-calc-ui .calc-row[style*="display: none"] { display: none; }
 .sk-page .sk-calc-ui select,
 .sk-page .sk-calc-ui input[type="number"],
-.sk-page .sk-calc-ui input[type="text"] { width: 110px; max-width: 50%; height: 20px; margin: 0; padding: 1px 6px; border: 1px solid #444; border-radius: 3px; background: #000; color: #fff; font-size: .85em; line-height: 1; flex: none; }
-.sk-page .sk-calc-ui input[type="checkbox"] { margin: 0; flex: none; accent-color: #4e73df; }
+.sk-page .sk-calc-ui input[type="text"] { box-sizing: border-box; flex: none; width: var(--in-w); min-width: var(--in-w); max-width: var(--in-w); height: 22px; margin: 0; padding: 1px 6px; border: 1px solid var(--edge); border-radius: 3px; background: rgba(255, 252, 242, .95); color: var(--text); font: 400 .9em/1 var(--font); }
+.sk-page .sk-calc-ui input[type="checkbox"] { flex: none; margin: 0; accent-color: var(--accent); }
 .sk-page .sk-calc-ui table { width: 100%; border-collapse: collapse; }
 .sk-page .sk-calc-ui td { padding: 0 0 6px; }
 .sk-page .sk-calc-ui td:last-child { text-align: right; }
-.sk-page .sk-results, .sk-page .sk-calc-ui .results-box { margin-top: 10px; padding: 8px; border-top: 1px solid #333; color: #ddd; font-size: .85em; font-weight: 400; line-height: 1.5; }
-.sk-page .sk-calc-ui .sk-results ul, .sk-page .sk-calc-ui .res-list { margin: 0; padding: 0; list-style: none; font-weight: 400; }
-.sk-page .sk-calc-ui .res-list li, .sk-page .sk-calc-ui .sk-results > ul > li { position: relative; margin-bottom: 2px; padding-left: 15px; }
-.sk-page .sk-calc-ui .res-list li::before, .sk-page .sk-calc-ui .sk-results > ul > li::before { content: "\2022"; position: absolute; left: 0; color: #fff; }
-.sk-page .sk-calc-ui .res-list li ul, .sk-page .sk-calc-ui .sk-results > ul > li ul { margin: .3em 0; padding-left: 1.1em; list-style: none; }
-.sk-page .sk-calc-ui .res-list li ul li::before, .sk-page .sk-calc-ui .sk-results > ul > li ul li::before { content: none; }
-.sk-page .skill-ailment { color: #ddd; }
-.sk-page .neg-stat { color: #C70039; }
-.sk-page .blue-stat { color: #8db7e0; }
+.sk-page .sk-results, .sk-page .sk-calc-ui .results-box { margin-top: 10px; padding: 8px 4px 0; border-top: 1px solid var(--edge); line-height: 1.5; font-weight: 400; }
+/* lists: bullet hangs, wrapped lines line up with the text, nested lists indent further */
+.sk-page .sk-calc-ui ul, .sk-page .sk-desc ul, .sk-page .sk-spec-body ul { margin: .3em 0; padding-left: 1.5em; list-style: disc; font-weight: 400; }
+.sk-page .sk-calc-ui ul ul { list-style: circle; margin: .2em 0; }
+.sk-page .sk-calc-ui li { margin: 0 0 3px; padding-left: 0; }
+.sk-page .sk-calc-ui li::marker { color: var(--accent); }
+.sk-page .sk-calc-ui li::before { content: none; }
+.sk-page .sk-calc-ui .res-list { list-style: disc; }
+.sk-page .neg-stat { color: #a8323a; }
+.sk-page .blue-stat { color: #1f5f8b; }
 dialog .sk-page { margin: -.25rem 0; }
+@media (max-width: 560px) {
+  main:has(#items.skills-page) { padding-left: .6rem; padding-right: .6rem; }
+  .sk-page { --in-w: 84px; font-size: 13px; }
+  .sk-tree-title { font-size: 1.5em; }
+  .sk-page .sk-acc-trig { gap: 8px; min-height: 40px; padding: 5px 8px; }
+  .sk-page .sk-icon-box { width: 28px; height: 28px; }
+  .sk-page .wpn-icon-small { width: 15px; height: 15px; }
+  .sk-page .wpn-requirement { max-width: 42%; }
+  .sk-page .avail-text { font-size: .62em; }
+  .sk-page .sk-acc-body { padding: 8px; }
+  .sk-page .sk-info-grid { grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 3px 8px; font-size: .88em; }
+  .sk-page .sk-spec { padding: 8px; }
+  .sk-page .sk-calc-ui { padding: 8px; }
+  .sk-page .sk-calc-ui .calc-row { gap: 6px; }
+  .sk-page .sk-calc-ui ul, .sk-page .sk-desc ul, .sk-page .sk-spec-body ul { padding-left: 1.3em; }
+}
 
 /* Menu: sections inside a group (Skill Database > Assist / Buff / Other / Weapon > categories) */
 .dg-sec { list-style: none; }

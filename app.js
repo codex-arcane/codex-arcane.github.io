@@ -218,7 +218,7 @@ const menuBtn = $("#menu-btn"), drawer = $("#drawer");
 
 const openSections = new Set();  // "groupId|Section" keys that are expanded in the menu
 const CHEV = '<svg class="chev" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-const catBtn = (c) => `<li><button type="button" data-id="${esc(c.id)}" aria-current="${c === state.cat}">${esc(c.name)}<small>${c.count}</small></button></li>`;
+const catBtn = (c, noCount) => `<li><button type="button" data-id="${esc(c.id)}" aria-current="${c === state.cat}">${esc(c.name)}${noCount ? "" : `<small>${c.count}</small>`}</button></li>`;
 const byCatName = (a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" });
 
 // Sectioned groups (Skill Database) show their sections in the order Assist, Buff, Other, Weapon; categories inside are A-Z.
@@ -227,11 +227,11 @@ function sectionedListHtml(g) {
   const extra = [...new Set(g.cats.map((c) => c.section).filter((x) => x && !names.some((n) => n.toLowerCase() === x.toLowerCase())))];
   const loose = g.cats.filter((c) => !c.section).sort(byCatName);
   const secs = [...names, ...extra].map((name) => ({ name, cats: g.cats.filter((c) => (c.section || "").toLowerCase() === name.toLowerCase()).sort(byCatName) })).filter((x) => x.cats.length);
-  return loose.map(catBtn).join("") + secs.map((x) => {
+  return loose.map((c) => catBtn(c, true)).join("") + secs.map((x) => {
     const key = `${g.id}|${x.name}`, open = openSections.has(key);
     return `<li class="dg-sec">
-      <button class="dg-sec-head" type="button" data-sec="${esc(key)}" aria-expanded="${open}">${CHEV}<span>${esc(x.name)}</span><small>${x.cats.reduce((n, c) => n + c.count, 0)}</small></button>
-      <ul class="dg-sub"${open ? "" : " hidden"}>${x.cats.map(catBtn).join("")}</ul>
+      <button class="dg-sec-head" type="button" data-sec="${esc(key)}" aria-expanded="${open}">${CHEV}<span>${esc(x.name)}</span></button>
+      <ul class="dg-sub"${open ? "" : " hidden"}>${x.cats.map((c) => catBtn(c, true)).join("")}</ul>
     </li>`;
   }).join("");
 }
@@ -249,7 +249,7 @@ function renderMenu() {
     return `<div class="dg">
       <button class="dg-head" type="button" data-g="${esc(g.id)}" aria-expanded="${open}">
         ${CHEV}
-        <span class="dg-name">${esc(g.name)}</span><small>${total}</small>
+        <span class="dg-name">${esc(g.name)}</span>${isSectioned(g) ? "" : `<small>${total}</small>`}
       </button>
       <ul class="dg-list"${open ? "" : " hidden"}>${inner}</ul>
     </div>`;
@@ -342,7 +342,7 @@ function renderHome() {
   $("#items").innerHTML = `<div class="hg-grid">${state.groups.filter((g) => g.cats.length).map((g) => {
     const n = g.cats.reduce((t, c) => t + c.count, 0);
     const unit = isSectioned(g) ? (n === 1 ? "skill" : "skills") : (n === 1 ? "item" : "items");
-    return `<button class="hg-card" type="button" data-g="${esc(g.id)}"><strong>${esc(g.name)}</strong><span>${n.toLocaleString()} ${unit}</span></button>`;
+    return `<button class="hg-card" type="button" data-g="${esc(g.id)}"><strong>${esc(g.name)}</strong>${isSectioned(g) ? "" : `<span>${n.toLocaleString()} ${unit}</span>`}</button>`;
   }).join("")}</div>`;
 }
 
@@ -748,8 +748,9 @@ function contentKind(item) {
 
 // ===== Skill pages: built to match the Obsidian (dataviewjs) reference card for card =====
 const SK_STD = new Set(["type", "element", "mp", "range", "combo start", "combo middle", "description"]);
-const SK_WEAPON_KEY = /(sword|staff|bow|gun|knuckle|halberd|katana|magic device|shield|dagger|arrow|handed|martial|bare|dual)/i;
-const skExtraMeta = (sk) => Object.entries(sk.meta || {}).filter(([k, v]) => v && !SK_STD.has(k.trim().toLowerCase()));
+// Anything that is not one of the standard facts below is a weapon box (All Weapons, Dagger, Ninjutsu Scroll, ...).
+const SK_GRID = /^(type|element|mp|mp cost|range|combo start|combo middle|description)$/i;
+const skExtraMeta = (sk) => Object.entries(sk.meta || {}).filter(([k, v]) => v && !SK_GRID.test(k.trim()));
 const skRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // Only simple formatting (bold, italic, line breaks, colours) is kept from saved HTML; everything else is removed.
@@ -797,12 +798,11 @@ function skillMetaChips(sk) {
   html += row("Combo start", sk.combo_start);
   html += row("Combo middle", sk.combo_middle);
   html += row("Range", sk.range);
-  for (const [k, v] of skExtraMeta(sk)) if (!SK_WEAPON_KEY.test(k)) html += row(k, v);
-  return html ? `<div class="sk-info-grid">${html}</div>` : "";
+    return html ? `<div class="sk-info-grid">${html}</div>` : "";
 }
 
 // weapon name -> icon, learned from every skill's own header icons (and from saved weapon boxes) so each box can show its icon
-const skWpnKey = (s) => String(s || "").toLowerCase().replace(/swords\b/g, "sword").replace(/[^a-z0-9]+/g, " ").trim();
+const skWpnKey = (s) => String(s || "").toLowerCase().replace(/(sword|weapon|arrow|shield|knuckle)s\b/g, "$1").replace(/[^a-z0-9]+/g, " ").trim();
 function skBuildWeaponIconMap() {
   const map = new Map();
   for (const list of Object.values(state.cache || {})) {
@@ -813,7 +813,8 @@ function skBuildWeaponIconMap() {
         const files = sk.weapon_icon_files || [], urls = sk.weapon_icons || [];
         for (let i = 0; i < Math.max(files.length, urls.length); i++) srcs.push(skillWeaponIconSrc(files[i] || urls[i], cat));
         const names = String(sk.weapon_text || "").replace(/\bonly\b/i, "").split("/").map((n) => n.trim()).filter(Boolean);
-        if (names.length && names.length === srcs.length) names.forEach((n, i) => { if (srcs[i] && !map.has(skWpnKey(n))) map.set(skWpnKey(n), srcs[i]); });
+        if (names.length === 1 && srcs[0] && /all weapon/i.test(names[0])) map.set("all weapon", srcs[0]);
+        else if (names.length && names.length === srcs.length) names.forEach((n, i) => { if (srcs[i] && !map.has(skWpnKey(n))) map.set(skWpnKey(n), srcs[i]); });
         for (const b of sk.spec_boxes || []) {
           const s = skillWeaponIconSrc(b.icon_file || b.icon, cat);
           if (s && b.title) map.set(skWpnKey(b.title), s);
@@ -842,7 +843,7 @@ function skillSpecsHtml(sk, cat) {
       body: b.html ? skSafe(skStripLead(b.html, b.title || "")) : skDecorate(esc(skStripLead(b.text || "", b.title || ""))),
     }));
   } else {
-    boxes = skExtraMeta(sk).filter(([k]) => SK_WEAPON_KEY.test(k)).map(([k, v]) => ({
+    boxes = skExtraMeta(sk).map(([k, v]) => ({
       title: k,
       icon: "",
       body: skDecorate(esc(skStripLead(v, k))),
@@ -925,7 +926,6 @@ function skillTreeDetailHtml(item, cat) {
     <div class="sk-tree-head">
       <p class="sk-tree-label">${item.group ? esc(item.group) + " \u00B7 " : ""}Skill tree</p>
       <h2 class="sk-tree-title">${esc(item.name)}</h2>
-      <p class="sk-tree-sub">${skills.length} ${skills.length === 1 ? "skill" : "skills"}</p>
     </div>
     <input type="search" class="sk-search" placeholder="Search skills..." aria-label="Search skills in this tree">
     <div class="sk-list">${cards}</div>

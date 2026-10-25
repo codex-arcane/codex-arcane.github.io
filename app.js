@@ -245,7 +245,7 @@ function renderMenu() {
     const open = openGroups.has(g.id);
     const total = g.cats.reduce((n, c) => n + c.count, 0);
     const inner = !g.cats.length ? `<li class="muted dg-empty">No categories in this group yet.</li>`
-      : isSectioned(g) ? sectionedListHtml(g) : g.cats.map(catBtn).join("");
+      : isSectioned(g) ? sectionedListHtml(g) : g.cats.map((c) => catBtn(c)).join("");
     return `<div class="dg">
       <button class="dg-head" type="button" data-g="${esc(g.id)}" aria-expanded="${open}">
         ${CHEV}

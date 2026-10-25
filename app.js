@@ -721,9 +721,10 @@ function sectionHtml(name, sec) {
   } else if (sec.text) {
     const t = sec.text.startsWith(name) ? sec.text.slice(name.length).trim() : sec.text;
     // Skip broken appearance text like "Male Normal Light Heavy Female..."
-    if (/^male\s+normal\s+light\s+heavy/i.test(t)) body = `<p class="muted">Appearance images were not captured by the scraper.</p>`;
+    if (/^male\s+normal\s+light\s+heavy/i.test(t)) body = "";
     else body = t ? `<p>${esc(t)}</p>` : "";
   }
+  if (recs.length && sec.extra_text) body += `<p>${esc(sec.extra_text)}</p>`;  // notes written next to the tables on Coryn
   return body ? `<h3>${esc(name.replace(/\s*\(\d+\)$/, ""))}</h3>${body}` : "";
 }
 function pageHtml(p) {
@@ -1235,7 +1236,7 @@ function appearanceSectionHtml(item, cat = catOf(item)) {
   if (sec?.records?.length) return sectionHtml("Appearance", sec);
   const t = (sec?.text || "").replace(/^Appearance\s*/i, "").trim();
   if (!t || /^male\s+normal\s+light\s+heavy/i.test(t)) {
-    return `<h3>Appearance</h3><p class="muted">Appearance images were not captured for this item. Re-scrape to fill this section.</p>`;
+    return "";  // no appearance to show: leave the section out completely
   }
   return sec ? `<h3>Appearance</h3><p>${esc(t)}</p>` : "";
 }

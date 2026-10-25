@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Owner panel - Codex Arcane</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;700&family=Cinzel+Decorative:wght@700&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="assets/favicon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="titlebar"><a class="brand" href="index.html"><img src="assets/logo.png" alt="Home" width="64" height="58"></a><h1 class="wordmark"><a href="index.html">Codex Arcane</a></h1><span class="page-label">Owner panel</span><div class="top-actions"><a class="btn" href="index.html" id="exit-panel">View site</a> <button type="button" class="btn" id="force-exit" title="Close stuck dialogs and go to the site">Exit</button></div></div>
+  <p id="who" class="muted"></p>
+</header>
+
+<main class="admin">
+  <p id="msg" class="muted" role="status"></p>
+
+  <section id="denied" hidden>
+    <p>This account isn't allowed to use the owner panel.</p>
+    <button class="signout">Sign out</button>
+  </section>
+
+  <div id="panel" hidden>
+    <section>
+      <h2>Groups and categories</h2>
+      <p class="muted">Skill trees live in the <strong>Skill Database</strong> group, filed under <strong>Assist</strong>, <strong>Buff</strong>, <strong>Other</strong> or <strong>Weapon</strong>. Drop <code>skilldatabase_all.json</code> (or the whole output folder) on JSON and each tree is filed automatically from the scrape. Move any category with the dropdowns on its row (group, and section for Skill Database). Press a group to open or close its categories. Each category has two drop buttons. <strong>JSON</strong> replaces its items with a JSON file, and <strong>Image</strong> uploads pictures. Drop files on a button, or press it to choose them. All pictures share one folder, so a picture with the same file name replaces the old one.</p>
+      <div class="tree-tools"><button id="expand-all" type="button">Expand all</button><button id="collapse-all" type="button">Collapse all</button><button id="migrate-skills" type="button" hidden title="Weapon, Buff, Assist and Other are separate groups right now. Move them into Skill Database.">Move skill groups into Skill Database</button></div>
+      <div id="tree"></div>
+
+      <h3>Add a group</h3>
+      <div class="row-add">
+        <input id="gname" placeholder="Group name, e.g. Equipment" aria-label="New group name">
+        <button id="gbtn">Add group</button>
+      </div>
+
+      <h3>Add a category</h3>
+      <p class="muted">Type a name, pick the group it belongs to (for Skill Database a <strong>Section</strong> picker appears: Assist, Buff, Other or Weapon), then choose its <strong>JSON</strong> file and any <strong>Image</strong> files (both optional, you can also drop them on the buttons). Press <strong>Add category</strong> to register it in that group.</p>
+      <div class="row-add">
+        <input id="newname" placeholder="Category name, e.g. Additional Gear" aria-label="New category name">
+        <label class="grp-pick">Group <select id="newgroup" aria-label="Group for the new category"></select></label>
+        <label class="grp-pick" id="secwrap" hidden>Section <select id="newsection" aria-label="Section for the new category"></select></label>
+        <button id="newbtn" class="dropbtn" data-drop="stage-json" type="button" title="Drop a JSON file here, or press to choose one">JSON</button>
+        <button id="newimg" class="dropbtn" data-drop="stage-img" type="button" title="Drop image files or a folder here, or press to choose images">Image</button>
+        <button id="addcat" type="button" class="primary">Add category</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Backup</h2>
+      <p class="muted">Download everything (menu layout and every category's items) as one file, and keep it somewhere safe. Pictures are not included, they stay in Supabase. Restoring puts the categories in the file back and replaces ones with the same name.</p>
+      <div class="backup-row">
+        <button id="backup" type="button">Download backup</button>
+        <button id="restore" type="button">Restore from backup</button>
+        <input id="restorefile" type="file" accept=".json,application/json" hidden>
+      </div>
+    </section>
+
+    <p><button class="signout">Sign out</button></p>
+  </div>
+</main>
+<dialog id="preview"><div id="preview-body"></div><div class="btns"><button type="button" id="pv-cancel">Cancel</button><button type="button" id="pv-go" class="go">Upload</button></div></dialog>
+<div id="dropbanner" role="status">Drop the file on a JSON or Image button.</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="admin.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>

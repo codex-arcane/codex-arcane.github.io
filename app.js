@@ -347,6 +347,7 @@ function renderHome() {
 }
 
 function showHome() {
+  document.body.classList.remove("skill-view");
   state.cat = null; state.group = null; state.items = []; state.found = [];
   $(".tools").hidden = true;
   $("#more").hidden = true;
@@ -367,8 +368,25 @@ async function pick(id, { hash = true } = {}) {
   updateCrumb();
   const items = await loadItems(cat);
   if (state.cat !== cat) return;  // the visitor went somewhere else while this was loading
-  if (items.length && items.every((i) => contentKind(i) === "skilltree")) return showSkillPage(items, cat);
+  const trees = skillTreesOf(items, cat);
+  if (trees.length) return showSkillPage(trees, cat);
   startList(items);
+}
+
+// Skill trees as saved by the scraper, plus loose skills (grouped by their tree) in case a file holds those instead.
+function skillTreesOf(items, cat) {
+  const trees = items.filter((i) => contentKind(i) === "skilltree");
+  const loose = items.filter((i) => contentKind(i) !== "skilltree" && i && i.name && (i.extras_html != null || i.weapon_text != null || i.has_calculator != null));
+  if (!trees.length && loose.length !== items.length) return [];
+  const byTree = new Map();
+  for (const sk of loose) {
+    const key = sk.tree || cat?.name || "Skills";
+    if (!byTree.has(key)) byTree.set(key, { type: "SkillTree", id: key, name: key, skills: [], calc_scripts: "" });
+    const t = byTree.get(key);
+    t.skills.push(sk);
+    if (sk.calc_scripts && !t.calc_scripts.includes(sk.calc_scripts)) t.calc_scripts += "\n\n" + sk.calc_scripts;
+  }
+  return [...trees, ...byTree.values()];
 }
 
 // A category of skill trees opens as a page (not a popup): header, search box, and one expandable row per skill.
@@ -376,6 +394,7 @@ function showSkillPage(items, cat) {
   state.items = items; state.found = [];
   $(".tools").hidden = true;
   $("#more").hidden = true;
+  document.body.classList.add("skill-view");
   const box = $("#items");
   box.className = "skills-page";
   box.innerHTML = items.map((t) => skillTreeDetailHtml(t, cat)).join("");
@@ -399,6 +418,7 @@ async function showFavorites({ hash = true } = {}) {
 
 // Starting a new list (category or favorites): reset search, sort and filters.
 function startList(items) {
+  document.body.classList.remove("skill-view");
   state.items = items;
   state.q = ""; state.type = ""; state.stat = ""; state.sort = "name"; state.dye = ""; state.shown = PAGE;
   $("#q").value = ""; $("#dye").value = ""; $("#sort").value = "name";
@@ -716,7 +736,7 @@ function pageHtml(p) {
 // ---- Unique UIs for non-equipment content (skills, tools, codex pages) ----
 function contentKind(item) {
   if (!item) return "item";
-  if (item.type === "SkillTree" || (Array.isArray(item.skills) && item.calc_scripts != null)) return "skilltree";
+  if (item.type === "SkillTree" || (Array.isArray(item.skills) && item.skills.length)) return "skilltree";
   if (item.type === "Page" || item.page) {
     const p = item.page || item;
     if (p.has_calculator || p.calc_scripts || p.interactive_html) return "tool";
@@ -726,10 +746,44 @@ function contentKind(item) {
   return "item";
 }
 
-// Facts shown in the little grid at the top of a skill. Rows named after a weapon become weapon boxes instead (see skillSpecsHtml).
+// ===== Skill pages: built to match the Obsidian (dataviewjs) reference card for card =====
 const SK_STD = new Set(["type", "element", "mp", "range", "combo start", "combo middle", "description"]);
 const SK_WEAPON_KEY = /(sword|staff|bow|gun|knuckle|halberd|katana|magic device|shield|dagger|arrow|handed|martial|bare|dual)/i;
 const skExtraMeta = (sk) => Object.entries(sk.meta || {}).filter(([k, v]) => v && !SK_STD.has(k.trim().toLowerCase()));
+const skRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Only simple formatting (bold, italic, line breaks, colours) is kept from saved HTML; everything else is removed.
+function skSafe(html) {
+  const t = document.createElement("template");
+  t.innerHTML = String(html || "");
+  const ALLOW = new Set(["B", "STRONG", "I", "EM", "U", "BR", "SPAN", "SMALL", "UL", "LI", "FONT"]);
+  const DROP = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "LINK", "META", "IMG", "INPUT", "SELECT", "BUTTON", "TEXTAREA"]);
+  const walk = (node) => {
+    [...node.childNodes].forEach((ch) => {
+      if (ch.nodeType === 3) return;
+      if (ch.nodeType !== 1 || DROP.has(ch.tagName)) { ch.remove(); return; }
+      walk(ch);
+      if (!ALLOW.has(ch.tagName)) { ch.replaceWith(...ch.childNodes); return; }
+      const color = ch.tagName === "FONT" ? ch.getAttribute("color") : ch.style && ch.style.color;
+      const weight = ch.style && ch.style.fontWeight;
+      [...ch.attributes].forEach((a) => ch.removeAttribute(a.name));
+      if (color && /^[#\w(),.% ]{1,40}$/.test(color)) ch.style.color = color;
+      if (weight) ch.style.fontWeight = weight;
+    });
+  };
+  walk(t.content);
+  return t.innerHTML;
+}
+
+// When only plain text was saved, bring back the two colours the reference uses.
+function skDecorate(html) {
+  return html
+    .replace(/^\s*(\[[^\]]*same effect[^\]]*\])\s*/i, '<b style="color:gold">$1</b><br>')
+    .replace(/\(\s*except[^)]*\)/gi, '<b style="color:#E77577">$&</b>');
+}
+
+// A weapon box must not repeat its own title in the text.
+const skStripLead = (html, label) => String(html || "").replace(new RegExp("^\\s*(?:<br\\s*/?>\\s*)*" + skRe(label) + "\\s*:?\\s*(?:<br\\s*/?>\\s*)*", "i"), "");
 
 function skillMetaChips(sk) {
   const row = (label, val) => val
@@ -746,10 +800,58 @@ function skillMetaChips(sk) {
   return html ? `<div class="sk-info-grid">${html}</div>` : "";
 }
 
-function skillSpecsHtml(sk) {
-  const boxes = skExtraMeta(sk).filter(([k]) => SK_WEAPON_KEY.test(k))
-    .map(([k, v]) => `<div class="sk-spec"><div class="sk-spec-title">${esc(k)}</div><div class="sk-spec-body">${esc(v)}</div></div>`);
-  return boxes.join("");
+// weapon name -> icon, learned from every skill's own header icons (and from saved weapon boxes) so each box can show its icon
+const skWpnKey = (s) => String(s || "").toLowerCase().replace(/swords\b/g, "sword").replace(/[^a-z0-9]+/g, " ").trim();
+function skBuildWeaponIconMap() {
+  const map = new Map();
+  for (const list of Object.values(state.cache || {})) {
+    for (const tree of list || []) {
+      const cat = itemCat.get(tree);
+      for (const sk of tree?.skills || []) {
+        const srcs = [];
+        const files = sk.weapon_icon_files || [], urls = sk.weapon_icons || [];
+        for (let i = 0; i < Math.max(files.length, urls.length); i++) srcs.push(skillWeaponIconSrc(files[i] || urls[i], cat));
+        const names = String(sk.weapon_text || "").replace(/\bonly\b/i, "").split("/").map((n) => n.trim()).filter(Boolean);
+        if (names.length && names.length === srcs.length) names.forEach((n, i) => { if (srcs[i] && !map.has(skWpnKey(n))) map.set(skWpnKey(n), srcs[i]); });
+        for (const b of sk.spec_boxes || []) {
+          const s = skillWeaponIconSrc(b.icon_file || b.icon, cat);
+          if (s && b.title) map.set(skWpnKey(b.title), s);
+        }
+      }
+    }
+  }
+  return map;
+}
+let skWpnMap = null;
+function skFillWeaponIcons(root) {
+  skWpnMap = skBuildWeaponIconMap();
+  root.querySelectorAll("img[data-wpn]").forEach((im) => {
+    if (im.getAttribute("src")) return;
+    const src = skWpnMap.get(im.getAttribute("data-wpn"));
+    if (src) { im.src = src; im.hidden = false; }
+  });
+}
+
+function skillSpecsHtml(sk, cat) {
+  let boxes;
+  if (Array.isArray(sk.spec_boxes) && sk.spec_boxes.length) {
+    boxes = sk.spec_boxes.map((b) => ({
+      title: b.title || "",
+      icon: skillWeaponIconSrc(b.icon_file || b.icon, cat),
+      body: b.html ? skSafe(skStripLead(b.html, b.title || "")) : skDecorate(esc(skStripLead(b.text || "", b.title || ""))),
+    }));
+  } else {
+    boxes = skExtraMeta(sk).filter(([k]) => SK_WEAPON_KEY.test(k)).map(([k, v]) => ({
+      title: k,
+      icon: "",
+      body: skDecorate(esc(skStripLead(v, k))),
+    }));
+  }
+  return boxes.map((b) => {
+    const key = skWpnKey(b.title);
+    const known = b.icon || (skWpnMap && skWpnMap.get(key)) || "";
+    return `<div class="sk-spec"><div class="sk-spec-title"><img class="wpn-icon-small" data-wpn="${esc(key)}" alt=""${known ? ` src="${esc(known)}"` : " hidden"}>${esc(b.title)}</div><div class="sk-spec-body">${b.body}</div></div>`;
+  }).join("");
 }
 
 function skillIconSrc(sk, cat) {
@@ -778,11 +880,11 @@ function skillWeaponHtml(sk, cat) {
   const icons = [];
   for (let i = 0; i < Math.max(files.length, urls.length); i++) {
     const src = skillWeaponIconSrc(files[i] || urls[i], cat);
-    if (src) icons.push(`<img class="sk-wicon" src="${esc(src)}" alt="" width="22" height="22" loading="lazy">`);
+    if (src) icons.push(`<img class="wpn-icon-small" src="${esc(src)}" alt="" loading="lazy">`);
   }
-  const text = sk.weapon_text ? `<span class="sk-weapon-text">${esc(sk.weapon_text)}</span>` : "";
+  const text = sk.weapon_text ? `<div class="avail-text">${esc(sk.weapon_text)}</div>` : "";
   if (!icons.length && !text) return "";
-  return `<p class="sk-weapon">${icons.join("")}${text}</p>`;
+  return `<div class="wpn-requirement"><div class="wpn-icons-row">${icons.join("")}</div>${text}</div>`;
 }
 
 let skUid = 0;
@@ -793,9 +895,9 @@ function skillCardHtml(sk, idx, cat) {
     : "";
   const id = `sk-${++skUid}-${String(sk.id || sk.name || idx).replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const desc = sk.description_html
-    ? `<div class="sk-desc">${sk.description_html}</div>`
+    ? `<div class="sk-desc">${skSafe(sk.description_html)}</div>`
     : (sk.description ? `<div class="sk-desc">${esc(sk.description)}</div>` : "");
-  const specs = skillSpecsHtml(sk);
+  const specs = skillSpecsHtml(sk, cat);
   const calc = sk.extras_html
     ? `<div class="sk-calc-ui" data-skill-calc="${idx}">${sk.extras_html}</div>`
     : "";
@@ -803,7 +905,7 @@ function skillCardHtml(sk, idx, cat) {
     <button type="button" class="sk-acc-trig" aria-expanded="false" aria-controls="${id}">
       <span class="sk-icon-box">${icon}</span>
       <span class="sk-acc-title">${esc(sk.name)}</span>
-      <span class="sk-acc-wpn">${skillWeaponHtml(sk, cat)}</span>
+      ${skillWeaponHtml(sk, cat)}
     </button>
     <div class="sk-acc-body" id="${id}" hidden>
       ${skillMetaChips(sk)}
@@ -829,28 +931,43 @@ function skillTreeDetailHtml(item, cat) {
   </section>`;
 }
 
-// Coryn's calculators were drawn for a dark page. Pale text (white, gold, light blue) is turned into a darker
-// version of itself so it reads on the parchment, and black input boxes become light. Runs again whenever a result changes.
-function fixCalcColors(root) {
-  const rgb = (c) => { const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(c); return m ? [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]] : null; };
-  const lum = (r, g, b) => (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-  root.querySelectorAll('[style*="color"], [style*="background"], font[color]').forEach((n) => {
-    const cs = getComputedStyle(n);
-    if (n.style.color || n.hasAttribute("color")) {
-      const c = rgb(cs.color);
-      if (c) {
-        const [r, g, b] = c, l = lum(r, g, b);
-        let fix = "";
-        if (l > 0.6) fix = (r > 200 && g > 150 && b < 120) ? "#8a5a00" : (b > r + 20) ? "#1f5f8b" : (g > r + 20 && g > b) ? "#2f6b2f" : "#35210e";
-        else if (r > 200 && g < 140 && b < 150 && l > 0.45) fix = "#a8323a";
-        if (fix) { n.style.color = fix; n.removeAttribute("color"); }
+// The saved calculators come from Coryn's own markup, which is not laid out like the reference.
+// This puts every "label + box" into one aligned row (label left, box right) and marks the results area.
+function normalizeCalc(box) {
+  if (box.dataset.skNorm) return;
+  box.dataset.skNorm = "1";
+  box.querySelectorAll("details").forEach((d) => { d.open = true; });
+  const CTRL = "input, select, textarea";
+  const BLOCK = new Set(["DIV", "P", "LI", "TR", "UL", "TABLE", "DETAILS", "SUMMARY", "BR"]);
+  [...box.querySelectorAll(CTRL)].forEach((c) => {
+    if (c.closest(".calc-row") && c.closest(".calc-row") !== box) return;
+    let row = c;
+    while (row.parentElement && row.parentElement !== box && !(row !== c && row.id)) {
+      const p = row.parentElement;
+      if (p.tagName === "DETAILS" || p.querySelectorAll(CTRL).length !== 1) break;
+      if (p.querySelector("ul, table, .results-box, [id$='res'], [id*='result' i]")) break;
+      row = p;
+    }
+    if (row === c) {  // bare control among siblings: wrap it with the text in front of it
+      const wrap = document.createElement("div");
+      let n = c.previousSibling;
+      const take = [];
+      while (n && n.nodeType !== 8) {
+        if (n.nodeType === 1 && (BLOCK.has(n.tagName) || n.querySelector?.(CTRL))) break;
+        take.unshift(n);
+        n = n.previousSibling;
       }
+      c.before(wrap);
+      take.forEach((t) => wrap.append(t));
+      wrap.append(c);
+      if (wrap.nextSibling && wrap.nextSibling.nodeName === "BR") wrap.nextSibling.remove();
+      row = wrap;
     }
-    if (n.style.background || n.style.backgroundColor) {
-      const c = rgb(cs.backgroundColor);
-      if (c && c[3] > 0.4 && lum(c[0], c[1], c[2]) < 0.28) n.style.background = "rgba(255, 250, 236, .75)";
-    }
+    row.classList.add("calc-row");
+    if (row.style.display !== "none") row.style.display = "flex";
   });
+  const found = [...box.querySelectorAll(".results-box, [id$='res'], [id*='result' i]")];
+  found.filter((el) => !found.some((o) => o !== el && o.contains(el))).forEach((el) => el.classList.add("sk-results"));
 }
 
 // Click a skill to open it, type to search; used by the skill page and by the popup.
@@ -874,11 +991,9 @@ function wireSkillTree(root) {
       });
     };
   });
-  root.querySelectorAll(".sk-calc-ui").forEach((box) => {
-    box.querySelectorAll("details").forEach((d) => { d.open = true; });  // the calculator is always visible, like the Obsidian page
-    fixCalcColors(box);
-    new MutationObserver(() => fixCalcColors(box)).observe(box, { childList: true, subtree: true });
-  });
+  root.querySelectorAll(".sk-calc-ui").forEach(normalizeCalc);
+  skFillWeaponIcons(root);
+  loadAll().then(() => skFillWeaponIcons(root));  // other categories may hold the icon a weapon box is missing
 }
 
 function toolDetailHtml(item) {

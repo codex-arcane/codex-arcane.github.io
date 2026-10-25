@@ -778,7 +778,8 @@ function skSafe(html) {
 // When only plain text was saved, bring back the two colours the reference uses.
 function skDecorate(html) {
   return html
-    .replace(/^\s*(\[[^\]]*same effect[^\]]*\])\s*/i, '<b style="color:gold">$1</b><br>')
+    .replace(/([.!?\)\]])\s+(?=[A-Z\[(])/g, "$1<br>")
+    .replace(/^\s*(\[[^\]]*same effect[^\]]*\])\s*(?:<br>)?\s*/i, '<b style="color:gold">$1</b><br>')
     .replace(/\(\s*except[^)]*\)/gi, '<b style="color:#E77577">$&</b>');
 }
 
@@ -931,6 +932,30 @@ function skillTreeDetailHtml(item, cat) {
   </section>`;
 }
 
+// Coryn's calculators were drawn for a dark page. Pale text (white, gold, light blue) is turned into a darker
+// version of itself so it reads on the parchment, and black input boxes become light. Runs again whenever a result changes.
+function fixCalcColors(root) {
+  const rgb = (c) => { const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(c); return m ? [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]] : null; };
+  const lum = (r, g, b) => (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  root.querySelectorAll('[style*="color"], [style*="background"], font[color]').forEach((n) => {
+    const cs = getComputedStyle(n);
+    if (n.style.color || n.hasAttribute("color")) {
+      const c = rgb(cs.color);
+      if (c) {
+        const [r, g, b] = c, l = lum(r, g, b);
+        let fix = "";
+        if (l > 0.6) fix = (r > 200 && g > 150 && b < 120) ? "#8a5a00" : (b > r + 20) ? "#1f5f8b" : (g > r + 20 && g > b) ? "#2f6b2f" : "#35210e";
+        else if (r > 200 && g < 140 && b < 150 && l > 0.45) fix = "#a8323a";
+        if (fix) { n.style.color = fix; n.removeAttribute("color"); }
+      }
+    }
+    if (n.style.background || n.style.backgroundColor) {
+      const c = rgb(cs.backgroundColor);
+      if (c && c[3] > 0.4 && lum(c[0], c[1], c[2]) < 0.28) n.style.background = "rgba(255, 250, 236, .75)";
+    }
+  });
+}
+
 // The saved calculators come from Coryn's own markup, which is not laid out like the reference.
 // This puts every "label + box" into one aligned row (label left, box right) and marks the results area.
 function normalizeCalc(box) {
@@ -968,6 +993,26 @@ function normalizeCalc(box) {
   });
   const found = [...box.querySelectorAll(".results-box, [id$='res'], [id*='result' i]")];
   found.filter((el) => !found.some((o) => o !== el && o.contains(el))).forEach((el) => el.classList.add("sk-results"));
+  if (!box.querySelector(".sk-results")) {
+    const rows = box.querySelectorAll(".calc-row");
+    const last = rows[rows.length - 1];
+    if (last) {
+      const after = [];
+      for (let n = last; n && n !== box; n = n.parentElement) {
+        for (let s = n.nextSibling; s; s = s.nextSibling) {
+          if (s.nodeType === 1 || (s.nodeType === 3 && s.textContent.trim())) after.push(s);
+        }
+        if (n.parentElement && n.parentElement.tagName === "DETAILS") break;
+      }
+      const real = after.filter((n) => !(n.nodeType === 1 && (n.tagName === "BR" || n.classList.contains("calc-row"))));
+      if (real.length) {
+        const wrap = document.createElement("div");
+        wrap.className = "sk-results";
+        real[0].before(wrap);
+        real.forEach((n) => wrap.append(n));
+      }
+    }
+  }
 }
 
 // Click a skill to open it, type to search; used by the skill page and by the popup.
@@ -992,6 +1037,11 @@ function wireSkillTree(root) {
     };
   });
   root.querySelectorAll(".sk-calc-ui").forEach(normalizeCalc);
+  root.querySelectorAll(".sk-acc-body").forEach((body) => {
+    fixCalcColors(body);  // pale colours (white, gold, light blue) become readable on the parchment
+    const calc = body.querySelector(".sk-calc-ui");
+    if (calc) new MutationObserver(() => fixCalcColors(calc)).observe(calc, { childList: true, subtree: true });
+  });
   skFillWeaponIcons(root);
   loadAll().then(() => skFillWeaponIcons(root));  // other categories may hold the icon a weapon box is missing
 }

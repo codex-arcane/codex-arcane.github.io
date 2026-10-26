@@ -727,3 +727,8 @@ dialog .sk-page { margin: -.25rem 0; }
 .rows li.sec-label { display: block; padding: .15rem .3rem; background: none; border: 0; color: var(--accent); font: 700 .75rem var(--font); letter-spacing: .1em; text-transform: uppercase; }
 .rows li.sec-label small { color: var(--muted); font-weight: 500; letter-spacing: 0; }
 .grp-pick[hidden] { display: none; }
+
+/* Lists inside item popups: one entry per line */
+.vlist { margin: .3em 0 .6em; padding-left: 1.2em; list-style: disc; }
+.vlist li { margin: .2em 0; }
+.vlist li::marker { color: var(--accent); }

@@ -707,6 +707,16 @@ function dropPagerHtml(pages, current = 0) {
     <button type="button" class="page-btn nav" data-page="${pages - 1}" ${current >= pages - 1 ? "disabled" : ""} aria-label="Last page">»</button>
   </div>`;
 }
+// Text that is really a list (several entries) is shown one entry per line.
+// New scrapes save the lines; for older data an entry is recognised by ending with ")" before the next capital: "... (2 pcs/craft) Furniture ... (1 pcs)".
+function listOrParaHtml(text, lines) {
+  let items = Array.isArray(lines) && lines.length > 1 ? lines : null;
+  if (!items) {
+    const parts = String(text || "").replace(/\)\s+(?=[A-Z])/g, ")\n").split("\n").map((x) => x.trim()).filter(Boolean);
+    if (parts.length > 1) items = parts;
+  }
+  return items ? `<ul class="vlist">${items.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : `<p>${esc(text)}</p>`;
+}
 function sectionHtml(name, sec) {
   const recs = sec.records || [];
   let body = "";
@@ -722,9 +732,13 @@ function sectionHtml(name, sec) {
     const t = sec.text.startsWith(name) ? sec.text.slice(name.length).trim() : sec.text;
     // Skip broken appearance text like "Male Normal Light Heavy Female..."
     if (/^male\s+normal\s+light\s+heavy/i.test(t)) body = "";
-    else body = t ? `<p>${esc(t)}</p>` : "";
+    else if (t) {
+      let lines = Array.isArray(sec.lines) ? sec.lines : null;
+      if (lines && lines[0] && lines[0].startsWith(name)) lines = [lines[0].slice(name.length).trim(), ...lines.slice(1)].filter(Boolean);
+      body = listOrParaHtml(t, lines);
+    } else body = "";
   }
-  if (recs.length && sec.extra_text) body += `<p>${esc(sec.extra_text)}</p>`;  // notes written next to the tables on Coryn
+  if (recs.length && sec.extra_text) body += listOrParaHtml(sec.extra_text);  // notes written next to the tables on Coryn
   return body ? `<h3>${esc(name.replace(/\s*\(\d+\)$/, ""))}</h3>${body}` : "";
 }
 function pageHtml(p) {
@@ -1148,7 +1162,7 @@ function obtainedSectionHtml(item) {
     }));
   }
   if (!rows.length) {
-    if (item.obtained_from?.text) return `<h3>Obtained From</h3><p>${esc(item.obtained_from.text)}</p>`;
+    if (item.obtained_from?.text) return `<h3>Obtained From</h3>${listOrParaHtml(item.obtained_from.text, item.obtained_from.lines)}`;
     return "";
   }
   const hasDye = rows.some((r) => r.dye || (r.dye_chips && r.dye_chips.length));
@@ -1193,7 +1207,7 @@ function recipeSectionHtml(item) {
     ).join("")}</ul>`;
   }
   if (pts.length) body += `<ul>${pts.join("")}</ul>`;
-  if (!body && sec?.text) body = `<p>${esc(sec.text)}</p>`;
+  if (!body && sec?.text) body = listOrParaHtml(sec.text, sec.lines);
   return body ? `<h3>Recipe</h3>${body}` : "";
 }
 function resolveAsset(cat, src) {

@@ -243,6 +243,22 @@ function start() {
     for (const g of structure.groups) { const c = g.categories.find((x) => x.id === id); if (c) return { g, c }; }
   };
 
+  // Category ids are file names (data/<id>.json) shared by the whole site. Two categories with the same
+  // name in different groups (Equipment > Dagger and Skill Database > Dagger) must not share one file,
+  // so a name that is taken by ANOTHER group gets the group's name in front: equipment-dagger.
+  function freeId(name, groupId) {
+    const base = slug(name);
+    if (!base) return "";
+    const taken = (id) => files.includes(id) || !!findCat(id);
+    const mine = (id) => findCat(id)?.g.id === groupId;
+    if (!taken(base) || mine(base)) return base;
+    const g = structure.groups.find((x) => x.id === groupId);
+    const prefix = slug(g?.name || groupId || "");
+    let id = prefix ? slug(`${prefix} ${name}`) : `${base}-2`;
+    for (let n = 2; taken(id) && !mine(id); n++) id = slug(`${prefix} ${name} ${n}`);
+    return id;
+  }
+
   // Shows what is about to be uploaded and warns about common problems before anything is replaced.
   async function confirmPreview(id, items, file, groupId) {
     const dlg = $("#preview");
@@ -436,9 +452,10 @@ function start() {
 
   $("#addcat").onclick = async () => {
     if (busy) return msg("Still uploading. Wait for it to finish.");
-    const name = $("#newname").value.trim(), id = slug(name), groupId = $("#newgroup").value, sectionId = $("#secwrap").hidden ? undefined : $("#newsection").value;
-    if (!id) return msg("Type a category name first.");
+    const name = $("#newname").value.trim(), groupId = $("#newgroup").value, sectionId = $("#secwrap").hidden ? undefined : $("#newsection").value;
+    if (!slug(name)) return msg("Type a category name first.");
     if (!structure.groups.length || !groupId) return msg("Add a group first, for example Equipment.");
+    const id = freeId(name, groupId);
     if (files.includes(id)) return msg("A category with that name already exists. Use its JSON button in the list to replace it instead.");
     busy = true;
     try {
@@ -602,13 +619,21 @@ function start() {
 
       for (const file of jsons) {
         let id, name, replacing = false;
+        let parsed = null;
+        try { parsed = JSON.parse(await file.text()); } catch {}
+        const file2 = parsed ? new File([JSON.stringify(parsed)], file.name, { type: "application/json" }) : file;
+        const skillList = Array.isArray(parsed) && isSkillTreeList(parsed);
+        const gName = Array.isArray(parsed) && !skillList ? groupFromItems(parsed) : null;
+        let targetGroup = gName ? ensureGroup(gName) : groupId;
+        let targetSection = $("#secwrap").hidden ? undefined : $("#newsection").value;
         if (rowId) {                                   // dropped on a category's Drop file button: replace that category
           id = rowId;
           name = findCat(id)?.c.name || pretty(id);
           replacing = true;
         } else {
           name = (jsons.length === 1 && ($("#newname").value.trim())) || pretty(file.name.replace(/\.json$/i, "").replace(/^skilldatabase_/, ""));
-          id = slug(name);
+          if (skillList) targetGroup = ensureSkillDb();   // skill trees always belong in Skill Database
+          id = freeId(name, targetGroup);                 // a name used by another group gets its own file
           if (!id) { report.push(`Skipped ${file.name}: couldn't make a category name from it.`); continue; }
           if (files.includes(id)) {
             if (!confirm(`${name} already exists. Replace its items with ${file.name}?`)) { report.push(`Skipped ${file.name}.`); continue; }
@@ -618,15 +643,7 @@ function start() {
             continue;
           }
         }
-        let parsed = null;
-        try { parsed = JSON.parse(await file.text()); } catch {}
-        const file2 = parsed ? new File([JSON.stringify(parsed)], file.name, { type: "application/json" }) : file;
-        const skillList = Array.isArray(parsed) && isSkillTreeList(parsed);
-        const gName = Array.isArray(parsed) && !skillList ? groupFromItems(parsed) : null;
-        let targetGroup = gName ? ensureGroup(gName) : groupId;
-        let targetSection = $("#secwrap").hidden ? undefined : $("#newsection").value;
-        if (skillList && !findCat(id)) {  // a new skill tree: Skill Database, section from the scrape
-          targetGroup = ensureSkillDb();
+        if (skillList && !findCat(id)) {  // a new skill tree: section from the scrape
           targetSection = matchSection(structure.groups.find((x) => x.id === targetGroup), parsed[0].group || parsed[0].skill_group);
         }
         const n = await uploadJson(id, file2, targetGroup);

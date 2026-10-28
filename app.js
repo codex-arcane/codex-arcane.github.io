@@ -623,13 +623,32 @@ const DROP_PAGE = 8;
 
 // Exact name lookup only. Coryn reuses numeric ids across types (monster id 145 ≠ item id 145),
 // so we never open a link from id alone without checking the name matches.
-const nameIndex = new Map(); // exact lowercased name → {item, cat}
+// Links also require the expected kind (monster/item/map) so "York" never opens a random item.
+const nameIndex = new Map(); // exact lowercased name → [{item, cat}, ...]
+function entryKind(item, cat) {
+  if (!item) return "item";
+  if (item.type === "SkillTree" || Array.isArray(item.skills)) return "skilltree";
+  if (item.type === "Page" || item.page) return "page";
+  const t = String(item.type || "").toLowerCase();
+  const cn = `${cat?.name || ""} ${cat?.id || ""}`.toLowerCase();
+  if (/\bmaps?\b/.test(cn) || t === "map") return "map";
+  if (/\bquests?\b/.test(cn) || t === "quest") return "quest";
+  if (/\bmonsters?\b|\bboss\b|\bmini\b/.test(cn)
+      || /^(boss|mini|normal|event)\b/.test(t)
+      || item.mtype
+      || Array.isArray(item.drops)
+      || item.tamable != null
+      || item.tamable_text) return "monster";
+  return "item";
+}
 function rebuildNameIndex() {
   nameIndex.clear();
   for (const cat of state.cats) {
     for (const i of state.cache[cat.id] || []) {
       const key = (i.name || "").trim().toLowerCase();
-      if (key && !nameIndex.has(key)) nameIndex.set(key, { item: i, cat });
+      if (!key) continue;
+      if (!nameIndex.has(key)) nameIndex.set(key, []);
+      nameIndex.get(key).push({ item: i, cat, kind: entryKind(i, cat) });
     }
   }
 }
@@ -638,37 +657,51 @@ function namesMatch(cellText, itemName) {
   const b = String(itemName || "").trim().toLowerCase();
   if (!a || !b) return false;
   if (a === b) return true;
-  // Allow "Name (Lv 145)" cell to match item stored as "Name"
   const stripLv = (s) => s.replace(/\s*\(lv\.?\s*\d+\)\s*$/i, "").trim();
   return stripLv(a) === b || a === stripLv(b) || stripLv(a) === stripLv(b);
 }
-function resolveLink(name) {
-  if (!name || typeof name !== "string") return null;
+function candidatesByName(name) {
+  if (!name || typeof name !== "string") return [];
   const raw = name.trim();
-  if (!raw) return null;
+  if (!raw) return [];
   const key = raw.toLowerCase();
-  if (nameIndex.has(key)) return nameIndex.get(key);
+  const out = [];
+  if (nameIndex.has(key)) out.push(...nameIndex.get(key));
   const noLv = key.replace(/\s*\(lv\.?\s*\d+\)\s*$/i, "").trim();
-  if (noLv && noLv !== key && nameIndex.has(noLv)) return nameIndex.get(noLv);
-  return null;
+  if (noLv && noLv !== key && nameIndex.has(noLv)) out.push(...nameIndex.get(noLv));
+  return out;
 }
-// Optional id: only accepted if some item with that id also has the same name as the cell.
-function resolveByIdAndName(id, name) {
+function resolveLink(name, { kind = null, id = null } = {}) {
+  let list = candidatesByName(name);
+  if (kind) list = list.filter((h) => h.kind === kind);
+  if (id != null && id !== "") {
+    const sid = String(id);
+    const byId = list.filter((h) => String(h.item.id) === sid);
+    if (byId.length) return byId[0];
+    // id known but no matching entry of this kind → do not fall back to a different kind
+    if (kind) return null;
+  }
+  return list[0] || null;
+}
+function resolveByIdAndName(id, name, { kind = null } = {}) {
   if (id == null || id === "" || !name) return null;
   const sid = String(id);
   for (const cat of state.cats) {
     for (const i of state.cache[cat.id] || []) {
       if (String(i.id) !== sid) continue;
-      if (namesMatch(name, i.name)) return { item: i, cat };
+      if (!namesMatch(name, i.name)) continue;
+      const hit = { item: i, cat, kind: entryKind(i, cat) };
+      if (kind && hit.kind !== kind) continue;
+      return hit;
     }
   }
   return null;
 }
-function linkCell(text, { id = null } = {}) {
+/** kind: "monster" | "item" | "map" | "quest" — required for safe links. */
+function linkCell(text, { id = null, kind = null } = {}) {
   const t = String(text ?? "").trim();
   if (!t) return "";
-  // Name first (safe). Id only confirms the same-named entry (avoids monster id → random armor).
-  const hit = resolveLink(t) || resolveByIdAndName(id, t);
+  const hit = resolveLink(t, { kind, id }) || resolveByIdAndName(id, t, { kind });
   if (hit) {
     return `<button type="button" class="cell-link" data-cat="${esc(hit.cat.id)}" data-id="${esc(String(hit.item.id))}">${esc(t)}</button>`;
   }
@@ -737,13 +770,13 @@ function listOrParaHtml(text, lines, { linkItems = false } = {}) {
   if (!items) {
     const t = String(text || "").trim();
     if (!t) return "";
-    return linkItems ? `<p class="sec-row">${linkCell(t)}</p>` : `<p>${esc(t)}</p>`;
+    return linkItems ? `<p class="sec-row">${linkCell(t, { kind: "item" })}</p>` : `<p>${esc(t)}</p>`;
   }
   return `<div class="sec-block">${items.map((l) => {
     const s = String(l).trim();
     if (!s) return "";
     if (isSecSubhead(s)) return `<p class="sec-subhead">${esc(s)}</p>`;
-    const cell = linkItems ? linkCell(s) : esc(s);
+    const cell = linkItems ? linkCell(s, { kind: "item" }) : esc(s);
     return `<div class="sec-row">${cell}</div>`;
   }).join("")}</div>`;
 }
@@ -775,7 +808,7 @@ function linkedSectionHtml(name, sec) {
     const t = String(text || "").trim();
     if (!t || used.has(t.toLowerCase())) return;
     used.add(t.toLowerCase());
-    html += `<div class="sec-row">${linkCell(t, { id: idFromCorynUrl(url) })}</div>`;
+    html += `<div class="sec-row">${linkCell(t, { id: idFromCorynUrl(url), kind: "item" })}</div>`;
   };
 
   for (const line of lines) {
@@ -816,9 +849,11 @@ function sectionHtml(name, sec) {
     const linked = cols.some((c) => LINKABLE_COLS.test(c));
     // Also try name-linking Material / Item columns always
     body = tableHtml(cols, recs.map((r) => cols.map((c) => {
-      if (/^(material|item|monster|source)$/i.test(c) && r[c]) {
-        const id = r[`${c}_link`]?.id || r[`${c}_link`]?.id;
-        return linkCell(r[c], { id });
+      if (/^(material|item)$/i.test(c) && r[c]) {
+        return linkCell(r[c], { id: r[`${c}_link`]?.id, kind: "item" });
+      }
+      if (/^(monster|source)$/i.test(c) && r[c]) {
+        return linkCell(r[c], { id: r[`${c}_link`]?.id, kind: "monster" });
       }
       return r[c] ?? "";
     })), { linked: false, htmlCols: new Set(cols.filter((c) => /^(material|item|monster|source)$/i.test(c))) });
@@ -1274,10 +1309,10 @@ function obtainedSectionHtml(item) {
   const cols = hasDye ? ["Monster", "Dye", "Map"] : ["Monster", "Map"];
   // Pre-render Monster/Map with exact id or exact name only; Dye as coloured chips.
   const data = rows.map((r) => {
-    const mon = linkCell(r.monster, { id: r.source_id });
+    const mon = linkCell(r.monster, { id: r.source_id, kind: "monster" });
     const map = r.map_id
-      ? linkCell(r.map, { id: r.map_id })  // only link maps when scraper saved a real map id
-      : esc(r.map || "");                   // plain text otherwise (matches Coryn when no link)
+      ? linkCell(r.map, { id: r.map_id, kind: "map" })
+      : esc(r.map || "");
     return hasDye ? [mon, dyeCellHtml(r), map] : [mon, map];
   });
   const total = data.length;
@@ -1308,7 +1343,7 @@ function recipeSectionHtml(item) {
   let body = "";
   if (mats.length) {
     body += `<ul class="recipe-mats">${mats.map((m) =>
-      `<li>${linkCell(m.name)}${m.quantity ? ` <span class="qty">×${esc(m.quantity)}</span>` : ""}</li>`
+      `<li>${linkCell(m.name, { kind: "item" })}${m.quantity ? ` <span class="qty">×${esc(m.quantity)}</span>` : ""}</li>`
     ).join("")}</ul>`;
   }
   if (pts.length) body += `<ul>${pts.join("")}</ul>`;

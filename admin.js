@@ -2,6 +2,11 @@ const cfg = window.GEAR_CONFIG || {};
 const $ = (s) => document.querySelector(s);
 const msg = (t) => ($("#msg").textContent = t);
 const pretty = (id) => id.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+// Name shown on the website for a dropped file: items_enhancercrysta_armor.json -> "Enhancer Crysta (Armor)"
+const nameFromFile = (stem) => {
+  const m = String(stem).match(/^(?:items[-_ ]?)?enhancer[-_ ]?crysta[-_ ]*\(?([a-z]+)\)?$/i);
+  return m ? `Enhancer Crysta (${m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase()})` : pretty(stem);
+};
 const slug = (s) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -425,7 +430,7 @@ function start() {
     let items = null;
     try { items = JSON.parse(await file.text()); } catch {}
     const tree = Array.isArray(items) && isSkillTreeList(items) ? items : null;
-    if (!box.value.trim()) box.value = tree && tree.length === 1 && tree[0].name ? tree[0].name : pretty(file.name.replace(/\.json$/i, "").replace(/^skilldatabase_/, ""));
+    if (!box.value.trim()) box.value = tree && tree.length === 1 && tree[0].name ? tree[0].name : nameFromFile(file.name.replace(/\.json$/i, "").replace(/^skilldatabase_/, ""));
     if (tree) {  // a skill tree goes to Skill Database under the section the scraper recorded; both can still be changed before pressing Add
       const gid = ensureSkillDb();
       render();
@@ -631,7 +636,7 @@ function start() {
           name = findCat(id)?.c.name || pretty(id);
           replacing = true;
         } else {
-          name = (jsons.length === 1 && ($("#newname").value.trim())) || pretty(file.name.replace(/\.json$/i, "").replace(/^skilldatabase_/, ""));
+          name = (jsons.length === 1 && ($("#newname").value.trim())) || nameFromFile(file.name.replace(/\.json$/i, "").replace(/^skilldatabase_/, ""));
           if (skillList) targetGroup = ensureSkillDb();   // skill trees always belong in Skill Database
           id = freeId(name, targetGroup);                 // a name used by another group gets its own file
           if (!id) { report.push(`Skipped ${file.name}: couldn't make a category name from it.`); continue; }

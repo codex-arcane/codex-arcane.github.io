@@ -708,14 +708,17 @@ function dropPagerHtml(pages, current = 0) {
   </div>`;
 }
 // Sub-headings under accordion sections (not list items — e.g. "Upgrade Into" under Used For)
-const SEC_SUBHEAD = /^(Upgrade\s+Into|Upgrade\s+From|Crafted\s+Into|Used\s+In|Material\s+For|Dismantle|Process)\b/i;
+const SEC_SUBHEAD = /^(Upgrade\s+Into|Upgrade\s+From|Crafted\s+Into|Crafting|Used\s+In|Material\s+For|Dismantle|Process|Sell|Dropped\s+By)\b/i;
 
 function isSecSubhead(line) {
   const s = String(line || "").trim();
-  if (!s || s.length > 40) return false;
+  if (!s || s.length > 48) return false;
   // Heading-only lines; not "Furniture (2 pcs/craft)" style rows
   if (/\(\s*\d/.test(s)) return false;
-  return SEC_SUBHEAD.test(s) || /^(Upgrade|Crafted)\b/i.test(s) && !/\s{2,}/.test(s) && s.split(/\s+/).length <= 3;
+  if (SEC_SUBHEAD.test(s)) return true;
+  // Short label-like lines (1–3 words) that are not resolvable as item names
+  if (s.split(/\s+/).length <= 3 && /^(Upgrade|Crafted|Crafting|Process|Sell)\b/i.test(s)) return true;
+  return false;
 }
 
 function idFromCorynUrl(url) {

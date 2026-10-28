@@ -734,11 +734,19 @@ dialog .sk-page { margin: -.25rem 0; }
 .vlist li::marker { color: var(--accent); }
 
 /* Accordion section lists (Used For, etc.) */
-.sec-block { display: flex; flex-direction: column; gap: .25rem; margin: .2rem 0 .5rem; }
+.sec-block { display: flex; flex-direction: column; gap: .2rem; margin: .2rem 0 .5rem; }
 .sec-subhead {
-  margin: .45rem 0 .15rem; font-size: .8rem; font-weight: 700;
-  color: var(--accent); letter-spacing: .02em;
+  margin: .55rem 0 .1rem; padding: 0;
+  font-size: .78rem; font-weight: 700;
+  color: var(--accent); letter-spacing: .03em;
+  text-transform: none;
 }
-.sec-subhead:first-child { margin-top: 0; }
-.sec-row { font-size: .92rem; line-height: 1.35; padding: .1rem 0; }
+.sec-subhead:first-child { margin-top: .15rem; }
+/* Indent items under Upgrade Into / Crafting so they don't look like headings */
+.sec-row {
+  font-size: .92rem; line-height: 1.4;
+  padding: .12rem 0 .12rem 1rem;
+  margin-left: .15rem;
+  border-left: 2px solid rgba(122, 74, 20, .25);
+}
 .sec-row .cell-link { font-weight: 600; }

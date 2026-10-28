@@ -707,38 +707,137 @@ function dropPagerHtml(pages, current = 0) {
     <button type="button" class="page-btn nav" data-page="${pages - 1}" ${current >= pages - 1 ? "disabled" : ""} aria-label="Last page">»</button>
   </div>`;
 }
+// Sub-headings under accordion sections (not list items — e.g. "Upgrade Into" under Used For)
+const SEC_SUBHEAD = /^(Upgrade\s+Into|Upgrade\s+From|Crafted\s+Into|Used\s+In|Material\s+For|Dismantle|Process)\b/i;
+
+function isSecSubhead(line) {
+  const s = String(line || "").trim();
+  if (!s || s.length > 40) return false;
+  // Heading-only lines; not "Furniture (2 pcs/craft)" style rows
+  if (/\(\s*\d/.test(s)) return false;
+  return SEC_SUBHEAD.test(s) || /^(Upgrade|Crafted)\b/i.test(s) && !/\s{2,}/.test(s) && s.split(/\s+/).length <= 3;
+}
+
+function idFromCorynUrl(url) {
+  const m = String(url || "").match(/(?:item|monster|map|quest)\.php\?id=(\d+)/i);
+  return m ? m[1] : null;
+}
+
 // Text that is really a list (several entries) is shown one entry per line.
-// New scrapes save the lines; for older data an entry is recognised by ending with ")" before the next capital: "... (2 pcs/craft) Furniture ... (1 pcs)".
-function listOrParaHtml(text, lines) {
+// Sub-heads render as labels; item names can be cross-linked when linkItems is true.
+function listOrParaHtml(text, lines, { linkItems = false } = {}) {
   let items = Array.isArray(lines) && lines.length > 1 ? lines : null;
   if (!items) {
     const parts = String(text || "").replace(/\)\s+(?=[A-Z])/g, ")\n").split("\n").map((x) => x.trim()).filter(Boolean);
     if (parts.length > 1) items = parts;
   }
-  return items ? `<ul class="vlist">${items.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : `<p>${esc(text)}</p>`;
+  if (!items) {
+    const t = String(text || "").trim();
+    if (!t) return "";
+    return linkItems ? `<p class="sec-row">${linkCell(t)}</p>` : `<p>${esc(t)}</p>`;
+  }
+  return `<div class="sec-block">${items.map((l) => {
+    const s = String(l).trim();
+    if (!s) return "";
+    if (isSecSubhead(s)) return `<p class="sec-subhead">${esc(s)}</p>`;
+    const cell = linkItems ? linkCell(s) : esc(s);
+    return `<div class="sec-row">${cell}</div>`;
+  }).join("")}</div>`;
 }
+
+/** Used For / similar: Coryn links + sub-heads, not a flat bullet list of labels. */
+function linkedSectionHtml(name, sec) {
+  const links = Array.isArray(sec.links) ? sec.links : [];
+  let lines = Array.isArray(sec.lines) ? sec.lines.slice() : [];
+  if (lines[0] && String(lines[0]).startsWith(name)) {
+    lines = [String(lines[0]).slice(name.length).trim(), ...lines.slice(1)].filter(Boolean);
+  }
+  if (!lines.length && sec.text) {
+    const raw = String(sec.text);
+    const stripped = raw.startsWith(name) ? raw.slice(name.length).trim() : raw;
+    lines = stripped.replace(/\)\s+(?=[A-Z])/g, ")\n").split(/\n+/).map((x) => x.trim()).filter(Boolean);
+  }
+  lines = lines.filter((l) => l.toLowerCase() !== name.toLowerCase().replace(/\s*\(\d+\)$/, ""));
+
+  const used = new Set();
+  let html = "";
+  let head = null;
+  const addHead = () => {
+    if (head) {
+      html += `<p class="sec-subhead">${esc(head)}</p>`;
+      head = null;
+    }
+  };
+  const addRow = (text, url) => {
+    const t = String(text || "").trim();
+    if (!t || used.has(t.toLowerCase())) return;
+    used.add(t.toLowerCase());
+    html += `<div class="sec-row">${linkCell(t, { id: idFromCorynUrl(url) })}</div>`;
+  };
+
+  for (const line of lines) {
+    if (isSecSubhead(line)) {
+      addHead();
+      head = line;
+      continue;
+    }
+    const link = links.find((l) => String(l.text || "").trim().toLowerCase() === line.toLowerCase());
+    addHead();
+    addRow(line, link && link.url);
+  }
+  // Any Coryn links not already listed
+  for (const l of links) {
+    addHead();
+    addRow(l.text, l.url);
+  }
+  if (!html && sec.text) {
+    const t = String(sec.text).startsWith(name) ? String(sec.text).slice(name.length).trim() : String(sec.text);
+    html = listOrParaHtml(t, null, { linkItems: true });
+    return html ? `<h3>${esc(name.replace(/\s*\(\d+\)$/, ""))}</h3>${html}` : "";
+  }
+  return html ? `<h3>${esc(name.replace(/\s*\(\d+\)$/, ""))}</h3><div class="sec-block">${html}</div>` : "";
+}
+
+
 function sectionHtml(name, sec) {
   const recs = sec.records || [];
   let body = "";
+  // Used For / upgrade-style sections: sub-heads + clickable item links (Coryn behavior)
+  if (/^used\s+for\b/i.test(name) || (Array.isArray(sec.links) && sec.links.length && !recs.length)) {
+    const linked = linkedSectionHtml(name, sec);
+    if (linked) return linked;
+  }
   if (recs.length && recs.every((r) => !r.values)) {
     const cols = [...new Set(recs.flatMap((r) => Object.keys(r)))].filter((c) =>
       recs.some((r) => r[c]) && !/_link$/i.test(c) && c !== "dye_chips");
-    // Only auto-link columns Coryn links (not Map by name alone)
     const linked = cols.some((c) => LINKABLE_COLS.test(c));
-    body = tableHtml(cols, recs.map((r) => cols.map((c) => r[c] ?? "")), { linked });
+    // Also try name-linking Material / Item columns always
+    body = tableHtml(cols, recs.map((r) => cols.map((c) => {
+      if (/^(material|item|monster|source)$/i.test(c) && r[c]) {
+        const id = r[`${c}_link`]?.id || r[`${c}_link`]?.id;
+        return linkCell(r[c], { id });
+      }
+      return r[c] ?? "";
+    })), { linked: false, htmlCols: new Set(cols.filter((c) => /^(material|item|monster|source)$/i.test(c))) });
   } else if (recs.length) {
-    body = `<ul>${recs.map((r) => `<li>${esc((r.values || []).filter(Boolean).join(" - "))}</li>`).join("")}</ul>`;
+    body = `<div class="sec-block">${recs.map((r) => {
+      const label = (r.values || []).filter(Boolean).join(" - ");
+      return `<div class="sec-row">${linkCell(label)}</div>`;
+    }).join("")}</div>`;
   } else if (sec.text) {
     const t = sec.text.startsWith(name) ? sec.text.slice(name.length).trim() : sec.text;
-    // Skip broken appearance text like "Male Normal Light Heavy Female..."
     if (/^male\s+normal\s+light\s+heavy/i.test(t)) body = "";
     else if (t) {
       let lines = Array.isArray(sec.lines) ? sec.lines : null;
       if (lines && lines[0] && lines[0].startsWith(name)) lines = [lines[0].slice(name.length).trim(), ...lines.slice(1)].filter(Boolean);
-      body = listOrParaHtml(t, lines);
+      body = listOrParaHtml(t, lines, { linkItems: true });
     } else body = "";
   }
-  if (recs.length && sec.extra_text) body += listOrParaHtml(sec.extra_text);  // notes written next to the tables on Coryn
+  // Prefer links when text body had no resolvable names
+  if (!body && (sec.links || []).length) {
+    return linkedSectionHtml(name, sec);
+  }
+  if (recs.length && sec.extra_text) body += listOrParaHtml(sec.extra_text, null, { linkItems: true });
   return body ? `<h3>${esc(name.replace(/\s*\(\d+\)$/, ""))}</h3>${body}` : "";
 }
 function pageHtml(p) {
@@ -915,8 +1014,11 @@ function skillCardHtml(sk, idx, cat) {
     ? `<div class="sk-desc">${skSafe(sk.description_html)}</div>`
     : (sk.description ? `<div class="sk-desc">${esc(sk.description)}</div>` : "");
   const specs = skillSpecsHtml(sk, cat);
-  const calc = sk.extras_html
-    ? `<div class="sk-calc-ui" data-skill-calc="${idx}">${sk.extras_html}</div>`
+  const calcRaw = sk.extras_html || "";
+  // Expand fully — no Coryn "Show more..." disclosure in the expanded card
+  const calcInner = calcRaw.replace(/<\/?details[^>]*>/gi, "").replace(/<summary[^>]*>[\s\S]*?<\/summary>/gi, "");
+  const calc = calcInner.trim()
+    ? `<div class="sk-calc-ui" data-skill-calc="${idx}">${calcInner}</div>`
     : "";
   return `<article class="sk-acc" data-skill-name="${esc((sk.name || "").toLowerCase())}">
     <button type="button" class="sk-acc-trig" aria-expanded="false" aria-controls="${id}">

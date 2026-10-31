@@ -781,8 +781,120 @@ function listOrParaHtml(text, lines, { linkItems = false } = {}) {
   }).join("")}</div>`;
 }
 
+// ---- Coryn-style text sections: keep Coryn's own layout (headings, bullet lists) and make its links clickable ----
+function corynLink(url) {
+  const m = String(url || "").match(/\b(item|monster|map|quest)\.php\?id=(\d+)/i);
+  return m ? { kind: m[1].toLowerCase(), id: m[2] } : null;
+}
+// Colours from Coryn that would be unreadable on the parchment (white, yellow, ...) are dropped.
+function readableColor(c) {
+  const v = String(c || "").trim().toLowerCase();
+  if (!v) return "";
+  if (/^(white|ivory|snow|yellow|gold|lightyellow|whitesmoke|cyan|aqua|lime|beige|lavender|silver)$/.test(v)) return "";
+  let r, g, b, m;
+  if ((m = v.match(/^#([0-9a-f]{3})$/))) [r, g, b] = [...m[1]].map((x) => parseInt(x + x, 16));
+  else if ((m = v.match(/^#([0-9a-f]{6})$/))) [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
+  else if ((m = v.match(/^rgba?\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/))) [r, g, b] = [+m[1], +m[2], +m[3]];
+  if (r != null && 0.299 * r + 0.587 * g + 0.114 * b > 175) return "";
+  return /^[#\w(),.% ]{1,40}$/.test(v) ? v : "";
+}
+// A block of saved Coryn HTML -> safe HTML. Links to items/monsters/maps/quests that exist on this site become
+// clickable; the rest stay plain text. Short label lines before a list or a link ("Crafting", "Upgrade Into") are headings.
+function structHtml(html) {
+  const t = document.createElement("template");
+  t.innerHTML = String(html || "");
+  const ALLOW = new Set(["DIV", "UL", "OL", "LI", "BR", "B", "STRONG", "I", "EM", "U", "SMALL", "SUB", "SUP", "SPAN", "A",
+    "TABLE", "THEAD", "TBODY", "TFOOT", "TR", "TD", "TH"]);
+  const walk = (node) => {
+    [...node.childNodes].forEach((ch) => {
+      if (ch.nodeType === 3) return;
+      if (ch.nodeType !== 1) { ch.remove(); return; }
+      if (["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "IMG", "INPUT", "SELECT", "BUTTON", "TEXTAREA", "LINK", "META"].includes(ch.tagName)) { ch.remove(); return; }
+      walk(ch);
+      if (ch.tagName === "A") {
+        const info = corynLink(ch.getAttribute("href"));
+        const text = ch.textContent;
+        const tpl = document.createElement("template");
+        tpl.innerHTML = info ? linkCell(text, { id: info.id, kind: info.kind }) : esc(text);
+        ch.replaceWith(tpl.content);
+        return;
+      }
+      if (!ALLOW.has(ch.tagName)) { ch.replaceWith(...ch.childNodes); return; }
+      const color = ch.tagName === "SPAN" ? readableColor(ch.style && ch.style.color) : "";
+      const weight = ch.tagName === "SPAN" && ch.style && ch.style.fontWeight;
+      const cls = ch.tagName === "DIV" && ch.classList.contains("h") ? "h" : "";
+      [...ch.attributes].forEach((a) => ch.removeAttribute(a.name));
+      if (color) ch.style.color = color;
+      if (weight) ch.style.fontWeight = weight;
+      if (cls) ch.className = cls;
+    });
+  };
+  walk(t.content);
+  const hasLink = (el) => !!el.querySelector("a, .cell-link");
+  const kids = (el) => [...el.children];
+  const mark = (parent) => {
+    const list = kids(parent);
+    list.forEach((el, i) => {
+      if (el.tagName === "DIV" && (el.classList.contains("h") || !hasLink(el))) {
+        const next = list[i + 1];
+        const txt = el.textContent.trim();
+        const plain = !el.querySelector("ul, ol, div, table");
+        if (plain && txt && txt.length <= 48 && next && (next.tagName === "UL" || next.tagName === "OL" || hasLink(next))) {
+          el.classList.add("sx-head");
+        }
+      }
+      if (["DIV", "LI", "UL", "OL"].includes(el.tagName)) mark(el);
+    });
+  };
+  mark(t.content);
+  return `<div class="sx">${[...t.content.childNodes].map((n) => (n.nodeType === 1 ? n.outerHTML : esc(n.textContent))).join("")}</div>`;
+}
+
+// Older data (saved before the layout was kept): rebuild headings and bullets from the saved text and its links.
+// Text before the first link is a heading; after each link comes its "(5 pcs/craft)" part, then maybe the next heading.
+function reconstructLinked(name, sec) {
+  const links = (sec.links || []).map((l) => ({ text: String(l.text || "").trim(), info: corynLink(l.url) })).filter((l) => l.text);
+  if (!links.length) return "";
+  const base = name.replace(/\s*\(\d+\)$/, "");
+  let T = String(sec.text || "");
+  if (T.startsWith(name)) T = T.slice(name.length); else if (T.startsWith(base)) T = T.slice(base.length);
+  T = T.replace(/\s+/g, " ").trim();
+  let cur = 0;
+  const groups = [];
+  let g = null;
+  const lastItem = () => (g && g.items.length ? g.items[g.items.length - 1] : null);
+  const flushSeg = (seg, first) => {
+    const m = seg.match(/^\s*(\([^)]*\))?\s*([\s\S]*)$/);
+    const q = m[1] || "";
+    const rest = m[2].trim();
+    const prev = lastItem();
+    if (q && prev) prev.q = q;
+    if (!rest) return "";
+    if (!first && rest.length <= 40 && /^[A-Z]/.test(rest)) return rest;       // a new heading
+    if (prev) prev.q = (prev.q ? prev.q + " " : "") + rest;                     // other text belongs to the entry
+    return "";
+  };
+  for (let k = 0; k < links.length; k++) {
+    const idx = T.indexOf(links[k].text, cur);
+    if (idx < 0) return "";
+    const seg = T.slice(cur, idx);
+    let head = "";
+    if (k === 0) head = seg.trim();
+    else head = flushSeg(seg, false);
+    if (head || !g) { g = { head, items: [] }; groups.push(g); }
+    g.items.push({ link: links[k], q: "" });
+    cur = idx + links[k].text.length;
+  }
+  const tail = flushSeg(T.slice(cur), true);
+  const body = groups.map((gr) => (gr.head ? `<div class="sx-head">${esc(gr.head)}</div>` : "") +
+    `<ul>${gr.items.map((it) => `<li>${linkCell(it.link.text, { id: it.link.info && it.link.info.id, kind: (it.link.info && it.link.info.kind) || "item" })}${it.q ? " " + esc(it.q) : ""}</li>`).join("")}</ul>`).join("");
+  return `<div class="sx">${body}${tail ? `<div>${esc(tail)}</div>` : ""}</div>`;
+}
+
 /** Used For / similar: Coryn links + sub-heads, not a flat bullet list of labels. */
 function linkedSectionHtml(name, sec) {
+  const rebuilt = reconstructLinked(name, sec);
+  if (rebuilt) return `<h3>${esc(name.replace(/\s*\(\d+\)$/, ""))}</h3>${rebuilt}`;
   const links = Array.isArray(sec.links) ? sec.links : [];
   let lines = Array.isArray(sec.lines) ? sec.lines.slice() : [];
   if (lines[0] && String(lines[0]).startsWith(name)) {
@@ -838,6 +950,11 @@ function linkedSectionHtml(name, sec) {
 function sectionHtml(name, sec) {
   const recs = sec.records || [];
   let body = "";
+  // Saved Coryn layout (new scrape): show it exactly as Coryn does
+  if (!recs.length && sec.html) {
+    const h = structHtml(sec.html);
+    if (h) return `<h3>${esc(name.replace(/\s*\(\d+\)$/, ""))}</h3>${h}`;
+  }
   // Used For / upgrade-style sections: sub-heads + clickable item links (Coryn behavior)
   if (/^used\s+for\b/i.test(name) || (Array.isArray(sec.links) && sec.links.length && !recs.length)) {
     const linked = linkedSectionHtml(name, sec);
@@ -875,7 +992,8 @@ function sectionHtml(name, sec) {
   if (!body && (sec.links || []).length) {
     return linkedSectionHtml(name, sec);
   }
-  if (recs.length && sec.extra_text) body += listOrParaHtml(sec.extra_text, null, { linkItems: true });
+  if (recs.length && sec.extra_html) body += structHtml(sec.extra_html);
+  else if (recs.length && sec.extra_text) body += listOrParaHtml(sec.extra_text, null, { linkItems: true });
   return body ? `<h3>${esc(name.replace(/\s*\(\d+\)$/, ""))}</h3>${body}` : "";
 }
 function pageHtml(p) {

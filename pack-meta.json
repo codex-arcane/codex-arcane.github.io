@@ -1,0 +1,4 @@
+{
+  "total_bytes": 0,
+  "note": "Optional. Run Measure pack size on the site, check the browser console for total_bytes, paste it here, and deploy so every visitor sees the size immediately."
+}

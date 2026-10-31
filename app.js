@@ -190,6 +190,7 @@ async function boot() {
   }
   // Restore offline images if a previous full pack is in IndexedDB
   hydrateOfflineImageMap().catch(() => {});
+  ensurePackSizeKnown().catch(() => {});
   renderMenu();
   addEventListener("hashchange", route);
   route();
@@ -251,7 +252,7 @@ function renderMenu() {
       <button type="button" data-nav="home">Home</button>
       <button type="button" data-nav="favorites">\u2605 Favorites<small>${prefs.favs.length}</small></button>
     </div>`;
-  $("#menu-list").innerHTML = top + state.groups.map((g) => {
+  const groups = state.groups.map((g) => {
     const open = openGroups.has(g.id);
     const total = g.cats.reduce((n, c) => n + c.count, 0);
     const inner = !g.cats.length ? `<li class="muted dg-empty">No categories in this group yet.</li>`
@@ -264,6 +265,13 @@ function renderMenu() {
       <ul class="dg-list"${open ? "" : " hidden"}>${inner}</ul>
     </div>`;
   }).join("");
+  const app = `<div class="dg dg-app">
+      <p class="dg-app-label">App</p>
+      <button type="button" class="dg-app-btn" data-app="download">Download offline pack</button>
+      <button type="button" class="dg-app-btn" data-app="updates">Check for updates</button>
+      <p class="dg-app-hint muted" id="menu-app-hint"></p>
+    </div>`;
+  $("#menu-list").innerHTML = top + groups + app;
 }
 
 function openMenu() {
@@ -289,6 +297,13 @@ $("#menu-close").onclick = () => closeMenu();
 $("#scrim").onclick = () => closeMenu();
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
 $("#menu-list").onclick = (e) => {
+  const appBtn = e.target.closest("[data-app]");
+  if (appBtn) {
+    const action = appBtn.dataset.app;
+    if (action === "download") startOfflinePackDownload();
+    else if (action === "updates") checkForAppUpdates();
+    return;
+  }
   const nav = e.target.closest("[data-nav]");
   if (nav) { closeMenu(false); nav.dataset.nav === "home" ? setHash("") : pick(FAV.id); return; }
   const head = e.target.closest(".dg-head");
@@ -348,6 +363,15 @@ function updateCrumb() {
 
 
 // ---- Durable offline pack (IndexedDB + real file download) ----
+let deferredInstall = null;
+addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredInstall = e;
+  const b = document.getElementById("btn-install-pwa");
+  if (b) b.hidden = false;
+});
+addEventListener("appinstalled", () => { deferredInstall = null; });
+
 // Cache API is easy to wipe with "clear cache". IndexedDB survives most cache-only clears.
 // A downloaded .json.gz file on the user's device survives until they delete the file.
 const OFFLINE_DB = "codex-offline";
@@ -455,12 +479,12 @@ function collectImageNames(items) {
   const set = new Set();
   const add = (v) => {
     if (!v || typeof v !== "string") return;
-    if (/^https?:\/\//i.test(v) && !/\/images\//i.test(v) && !/\/skill\//i.test(v)) {
-      // remote non-site URLs still collected by full URL key later
-    }
+    // Only real image file names — bare words caused hundreds of false "missing" 404s
     const name = v.split(/[\\/]/).pop().split("?")[0];
-    if (name && /\.(png|jpe?g|gif|webp|svg)$/i.test(name)) set.add(name);
-    else if (name && !name.includes(" ") && name.length < 120) set.add(name);
+    if (!name || name.length > 160) return;
+    if (!/\.(png|jpe?g|gif|webp|svg)$/i.test(name)) return;
+    if (/^https?:\/\//i.test(v) && !/\/(images|skill)\//i.test(v) && !/supabase/i.test(v)) return;
+    set.add(name);
   };
   const walk = (obj) => {
     if (!obj || typeof obj !== "object") return;
@@ -480,28 +504,185 @@ function imageFetchUrl(name) {
   return `images/${encodeURIComponent(name)}`;
 }
 
+/** HEAD one URL; returns byte size or 0 if unknown/missing. */
+async function headBytes(url) {
+  try {
+    const r = await fetch(url, { method: "HEAD", cache: "no-cache" });
+    if (!r.ok) return { bytes: 0, ok: false };
+    const len = parseInt(r.headers.get("content-length") || "0", 10);
+    return { bytes: len > 0 ? len : 0, ok: true, known: len > 0 };
+  } catch {
+    return { bytes: 0, ok: false };
+  }
+}
+
+/**
+ * Measure pack size BEFORE downloading bodies.
+ * Uses HEAD on category JSON + each image (parallel). Shows real storage/data use.
+ */
+async function estimateFullPackSize(onProgress) {
+  const cats = state.cats || [];
+  let dataBytes = 0, dataOk = 0, dataFail = 0;
+  for (let i = 0; i < cats.length; i++) {
+    const c = cats[i];
+    if (onProgress) onProgress(`Measuring lists… ${i + 1}/${cats.length}`);
+    const url = dataUrlForCat(c.id);
+    const h = await headBytes(url);
+    if (h.ok) {
+      dataOk++;
+      dataBytes += h.known ? h.bytes : 200 * 1024; // fallback guess per list if host omits length
+    } else dataFail++;
+  }
+  // Collect image names from already-cached items when possible (fast); else light fetch of JSON
+  if (onProgress) onProgress("Collecting image list…");
+  const names = new Set();
+  for (const c of cats) {
+    let items = state.cache[c.id];
+    if (!items) {
+      try {
+        const r = await fetch(dataUrlForCat(c.id), { cache: "force-cache" });
+        if (r.ok) {
+          items = await r.json();
+          setCache(c, items);
+        }
+      } catch {}
+    }
+    for (const n of collectImageNames(items || [])) names.add(n);
+  }
+  // Subtract images already in IndexedDB from "need to download"
+  let already = 0, alreadyBytes = 0;
+  const need = [];
+  for (const name of names) {
+    try {
+      const blob = await idbGetImage(name);
+      if (blob && blob.size > 0) {
+        already++;
+        alreadyBytes += blob.size;
+        continue;
+      }
+    } catch {}
+    need.push(name);
+  }
+  let imgBytes = 0, imgOk = 0, imgFail = 0, imgUnknown = 0;
+  const list = need;
+  let i = 0;
+  const concurrency = 20;
+  async function worker() {
+    while (i < list.length) {
+      const idx = i++;
+      const name = list[idx];
+      const h = await headBytes(imageFetchUrl(name));
+      if (h.ok) {
+        imgOk++;
+        if (h.known) imgBytes += h.bytes;
+        else {
+          imgUnknown++;
+          imgBytes += 8 * 1024; // typical small icon guess
+        }
+      } else imgFail++;
+      if (onProgress && (idx % 25 === 0 || idx === list.length - 1)) {
+        onProgress(`Measuring images… ${idx + 1}/${list.length} (${formatBytes(imgBytes + alreadyBytes)})`);
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, list.length) || 1 }, () => worker()));
+  // gzip/zip overhead is small vs images; quote uncompressed resource total
+  const downloadBytes = dataBytes + imgBytes; // still need to fetch these
+  const totalStored = downloadBytes + alreadyBytes;
+  return {
+    dataBytes,
+    imgBytes,
+    alreadyBytes,
+    already,
+    imageCount: names.size,
+    needCount: list.length,
+    missingCount: imgFail,
+    downloadBytes,
+    totalStored,
+    dataOk,
+    dataFail,
+  };
+}
+
 async function downloadAllImages(names, onProgress) {
   const list = [...names];
-  let ok = 0, fail = 0, bytes = 0;
-  const concurrency = 6;
+  let ok = 0, fail = 0, bytes = 0, skipped = 0;
+  const failed = [];
+  // Higher parallelism speeds packs; still capped so Supabase/browser stay stable
+  const concurrency = 14;
+  const maxAttempts = 3;
+
+  async function alreadyHave(name) {
+    try {
+      const blob = await idbGetImage(name);
+      return blob && blob.size > 0 ? blob : null;
+    } catch { return null; }
+  }
+
+  async function fetchOne(name) {
+    const existing = await alreadyHave(name);
+    if (existing) {
+      skipped++;
+      ok++;
+      bytes += existing.size;
+      return true;
+    }
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const r = await fetch(imageFetchUrl(name), { cache: "no-cache" });
+        if (!r.ok) {
+          lastErr = r.status;
+          if (r.status === 404) return false; // no point retrying missing files
+          await new Promise((r) => setTimeout(r, 250 * attempt));
+          continue;
+        }
+        const blob = await r.blob();
+        if (!blob || blob.size < 10) return false;
+        await idbPutImage(name, blob);
+        bytes += blob.size;
+        ok++;
+        return true;
+      } catch (e) {
+        lastErr = e;
+        await new Promise((r) => setTimeout(r, 300 * attempt));
+      }
+    }
+    return false;
+  }
+
   let i = 0;
   async function worker() {
     while (i < list.length) {
       const idx = i++;
       const name = list[idx];
-      try {
-        const r = await fetch(imageFetchUrl(name), { cache: "force-cache" });
-        if (!r.ok) { fail++; continue; }
-        const blob = await r.blob();
-        await idbPutImage(name, blob);
-        bytes += blob.size;
-        ok++;
-      } catch { fail++; }
-      if (onProgress) onProgress(ok + fail, list.length, ok, fail, bytes);
+      const good = await fetchOne(name);
+      if (!good) { fail++; failed.push(name); }
+      if (onProgress) onProgress(ok + fail, list.length, ok, fail, bytes, skipped);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(concurrency, list.length) }, () => worker()));
-  return { ok, fail, bytes };
+  await Promise.all(Array.from({ length: Math.min(concurrency, list.length) || 1 }, () => worker()));
+
+  // Second pass on transient failures only (not permanent 404s already excluded)
+  if (failed.length) {
+    const retryList = failed.splice(0, failed.length);
+    let ri = 0;
+    async function retryWorker() {
+      while (ri < retryList.length) {
+        const name = retryList[ri++];
+        const good = await fetchOne(name);
+        if (good) {
+          fail = Math.max(0, fail - 1);
+        } else {
+          failed.push(name);
+        }
+        if (onProgress) onProgress(ok + fail, list.length, ok, fail, bytes, skipped);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(8, retryList.length) || 1 }, () => retryWorker()));
+  }
+
+  return { ok, fail, bytes, skipped, failed };
 }
 
 async function loadJSZip() {
@@ -521,6 +702,87 @@ function formatBytes(n) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const PACK_SIZE_KEY = "codex_pack_total_bytes";
+const PACK_SIZE_AT = "codex_pack_total_at";
+
+function readCachedPackBytes() {
+  try {
+    const n = parseInt(localStorage.getItem(PACK_SIZE_KEY) || "", 10);
+    return n > 0 ? n : null;
+  } catch { return null; }
+}
+
+function writeCachedPackBytes(n) {
+  try {
+    localStorage.setItem(PACK_SIZE_KEY, String(n));
+    localStorage.setItem(PACK_SIZE_AT, new Date().toISOString());
+  } catch {}
+}
+
+/** Single total for the UI: pack-meta.json (published) or last measured cache. */
+async function getKnownPackBytes() {
+  // 1) Static meta file you publish with the site (instant, no measuring)
+  try {
+    const r = await fetch("pack-meta.json", { cache: "no-cache" });
+    if (r.ok) {
+      const j = await r.json();
+      const n = parseInt(j.total_bytes || j.totalBytes || j.bytes || 0, 10);
+      if (n > 0) {
+        writeCachedPackBytes(n);
+        return { bytes: n, source: "published" };
+      }
+    }
+  } catch {}
+  // 2) Browser cache from a previous measure
+  const cached = readCachedPackBytes();
+  if (cached) return { bytes: cached, source: "cached" };
+  return null;
+}
+
+/** Background measure once so the home page can show one number without a long wait on click. */
+async function ensurePackSizeKnown(onDone) {
+  const known = await getKnownPackBytes();
+  if (known) {
+    if (onDone) onDone(known.bytes, known.source);
+    return known.bytes;
+  }
+  try {
+    const est = await estimateFullPackSize(() => {});
+    const total = est.totalStored || est.downloadBytes || 0;
+    if (total > 0) writeCachedPackBytes(total);
+    if (onDone) onDone(total, "measured");
+    return total;
+  } catch {
+    if (onDone) onDone(null, "error");
+    return null;
+  }
+}
+
+async function offerPwaInstall(hintFn) {
+  const standalone = window.matchMedia("(display-mode: standalone)").matches
+    || window.navigator.standalone === true;
+  if (standalone) {
+    if (hintFn) hintFn("Pack ready. You are already using the installed app.");
+    return;
+  }
+  if (deferredInstall) {
+    try {
+      deferredInstall.prompt();
+      const choice = await deferredInstall.userChoice;
+      if (hintFn) {
+        hintFn(choice.outcome === "accepted"
+          ? "Install started — open Codex Arcane from your home screen when it finishes."
+          : "Pack saved. You can install later from the browser menu (Install app).");
+      }
+      if (choice.outcome === "accepted") deferredInstall = null;
+      return;
+    } catch {}
+  }
+  if (hintFn) {
+    hintFn("Pack saved. To install like an app: browser menu → Install app / Add to Home Screen.");
+  }
 }
 
 /** Slim records for storage: drop huge calculator script blobs; keep structure users need. */
@@ -680,12 +942,136 @@ async function tryBootFromOfflinePack() {
   }
 }
 
+
+const APP_VER_KEY = "codex_installed_version";
+
+async function fetchAppMeta() {
+  const urls = [];
+  if (typeof remote !== "undefined" && remote) {
+    urls.push(`${CFG.supabaseUrl}/storage/v1/object/public/site/config/app-version.json`);
+  }
+  urls.push("pack-meta.json");
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, { cache: "no-cache" });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const version = String(j.version || j.ver || "").trim();
+      const bytes = parseInt(j.total_bytes || j.totalBytes || j.bytes || 0, 10) || 0;
+      if (version || bytes) {
+        if (bytes > 0) writeCachedPackBytes(bytes);
+        return { version: version || null, total_bytes: bytes || readCachedPackBytes() || 0, updated_at: j.updated_at || j.updated || null, source: url };
+      }
+    } catch {}
+  }
+  return { version: null, total_bytes: readCachedPackBytes() || 0, updated_at: null, source: "none" };
+}
+
+function installedVersion() {
+  try { return localStorage.getItem(APP_VER_KEY) || ""; } catch { return ""; }
+}
+function setInstalledVersion(v) {
+  try { if (v) localStorage.setItem(APP_VER_KEY, v); } catch {}
+}
+function menuAppHint(msg) {
+  const el = document.getElementById("menu-app-hint");
+  if (el) el.textContent = msg || "";
+}
+
+async function checkForAppUpdates() {
+  menuAppHint("Checking…");
+  try {
+    const meta = await fetchAppMeta();
+    const local = installedVersion();
+    if (!meta.version) {
+      menuAppHint("No published version yet. The site owner can publish one from the owner panel.");
+      return;
+    }
+    if (!local) {
+      menuAppHint("Current site version " + meta.version + ". Download the offline pack to save it on this device.");
+      return;
+    }
+    if (local === meta.version) {
+      menuAppHint("There is no new version yet.");
+      return;
+    }
+    menuAppHint("New version detected (" + meta.version + "; you have " + local + "). Please download the offline pack.");
+  } catch (err) {
+    menuAppHint("Update check failed: " + (err.message || err));
+  }
+}
+
+async function startOfflinePackDownload() {
+  const hint = menuAppHint;
+  try {
+    hint("Checking size…");
+    const meta = await fetchAppMeta();
+    let total = meta.total_bytes || readCachedPackBytes();
+    if (!total) {
+      hint("Measuring pack size…");
+      total = await ensurePackSizeKnown(function () {});
+    }
+    const verLine = meta.version ? ("Version " + meta.version + "\n") : "";
+    const ok = confirm(
+      "Download the full offline pack?\n\n" +
+      verLine +
+      "About " + formatBytes(total || 0) + " of storage.\n\n" +
+      "Lists and images will be saved, and a zip backup will download.\n" +
+      "When it finishes, the browser may offer Install app.\n\nContinue?"
+    );
+    if (!ok) { hint("Download cancelled."); return; }
+    hint("Downloading data…");
+    const built = await buildOfflinePack({
+      slim: true,
+      onProgress: function (d, totalN, name) { hint("Lists " + d + "/" + totalN + ": " + (name || "") + "…"); },
+    });
+    const payload = built.payload, rawBytes = built.rawBytes, imageNames = built.imageNames;
+    hint("Downloading images…");
+    const imgResult = await downloadAllImages(imageNames, function (done, totalN, okN, failN, bytes, skipped) {
+      hint("Images " + done + "/" + totalN + " (saved " + okN + ", missing " + failN + ") · " + formatBytes(bytes) + "…");
+    });
+    await hydrateOfflineImageMap();
+    hint("Building zip…");
+    const JSZip = await loadJSZip();
+    const zip = new JSZip();
+    zip.file("data.json", JSON.stringify(payload));
+    const folder = zip.folder("images");
+    for (const name of imageNames) {
+      const blob = await idbGetImage(name);
+      if (blob) folder.file(name, blob);
+    }
+    const zipBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
+    await idbSetPack({
+      payload: payload,
+      compressedBytes: zipBlob.size,
+      rawBytes: rawBytes,
+      imageBytes: imgResult.bytes,
+      imageCount: imgResult.ok,
+      built_at: payload.built_at,
+      slim: true,
+      with_images: true,
+      version: meta.version || null,
+    });
+    if (zipBlob.size > 0) writeCachedPackBytes(zipBlob.size);
+    if (meta.version) setInstalledVersion(meta.version);
+    downloadBlob(zipBlob, "codex-arcane-offline-" + (meta.version || new Date().toISOString().slice(0, 10)) + ".zip");
+    const miss = (imgResult.failed && imgResult.failed.length) ? (" Missing " + imgResult.failed.length + " images.") : "";
+    hint("Done · " + formatBytes(zipBlob.size) + " · " + imgResult.ok + " images." + miss);
+    if (typeof offerPwaInstall === "function") await offerPwaInstall(hint);
+  } catch (err) {
+    hint("Download failed: " + (err.message || err));
+  }
+}
+
 function offlinePanelHtml() {
   return `<section class="install-panel" aria-label="Offline pack">
     <h2>Offline copy</h2>
-    <p class="muted">Download a <strong>full offline pack</strong>: all lists <em>and</em> item/skill images, compressed into one file. It is saved in this browser’s durable storage <em>and</em> as a file on your device. Clearing “cached images” usually does <strong>not</strong> delete it; clearing <em>all site data</em> does — keep the file to restore.</p>
+    <p class="pack-size-notice" id="pack-size-notice">Full offline pack size: <strong>checking…</strong></p>
+    <p class="muted">One download saves lists and images for offline use, and a zip backup on your device. After it finishes, your browser can offer <strong>Install app</strong> (same idea as Add to Home Screen).</p>
     <div class="install-actions">
-      <button type="button" class="btn" id="btn-dl-pack">Download full data pack…</button>
+      <button type="button" class="btn" id="btn-dl-pack">Download offline pack…</button>
+      <button type="button" class="btn secondary" id="btn-measure-pack">Measure pack size</button>
+      <button type="button" class="btn secondary" id="btn-install-pwa" hidden>Install app</button>
       <button type="button" class="btn secondary" id="btn-import-pack">Load pack from file…</button>
       <button type="button" class="btn secondary" id="btn-clear-pack">Remove offline pack</button>
       <input type="file" id="pack-file" accept=".zip,.gz,.json,application/zip,application/gzip,application/json" hidden>
@@ -696,38 +1082,97 @@ function offlinePanelHtml() {
 
 function wireOfflinePanel() {
   const hint = (m) => { const el = $("#pack-hint"); if (el) el.textContent = m || ""; };
+  const sizeEl = $("#pack-size-notice");
+  const setSizeNotice = (bytes, source) => {
+    if (!sizeEl) return;
+    if (bytes > 0) {
+      sizeEl.innerHTML = `Full offline pack: about <strong>${formatBytes(bytes)}</strong> of storage`
+        + (source === "published" ? "" : source === "cached" ? " (saved estimate)" : " (measured)");
+    } else {
+      sizeEl.innerHTML = `Full offline pack size: <strong>unavailable</strong> — try again later.`;
+    }
+  };
+  getKnownPackBytes().then((k) => {
+    if (k) setSizeNotice(k.bytes, k.source);
+    else ensurePackSizeKnown(setSizeNotice);
+  });
   idbGetPack().then((rec) => {
     if (rec && rec.compressedBytes) {
-      hint(`Offline pack on this device: ${formatBytes(rec.compressedBytes)} · built ${rec.built_at ? new Date(rec.built_at).toLocaleString() : "unknown"}${rec.slim ? " · light (scripts trimmed)" : ""}.`);
+      hint(`Offline pack on this device: ${formatBytes(rec.compressedBytes)} · built ${rec.built_at ? new Date(rec.built_at).toLocaleString() : "unknown"}.`);
     }
   }).catch(() => {});
+
+  const btnInstall = $("#btn-install-pwa");
+  if (btnInstall) {
+    btnInstall.hidden = !deferredInstall;
+    btnInstall.onclick = () => offerPwaInstall(hint);
+  }
+  if (deferredInstall && btnInstall) btnInstall.hidden = false;
+
+  const btnMeasure = $("#btn-measure-pack");
+  if (btnMeasure) {
+    btnMeasure.onclick = async () => {
+      btnMeasure.disabled = true;
+      hint("Measuring all lists and images on the server…");
+      try {
+        const est = await estimateFullPackSize((msg) => hint(msg));
+        const total = est.totalStored || est.downloadBytes || 0;
+        if (total > 0) writeCachedPackBytes(total);
+        setSizeNotice(total, "measured");
+        hint(
+          `Measured total: ${formatBytes(total)}`
+          + ` · lists ~${formatBytes(est.dataBytes)}`
+          + ` · images ~${formatBytes(est.imgBytes + (est.alreadyBytes || 0))}`
+          + ` (${(est.imageCount || 0).toLocaleString()} files`
+          + (est.missingCount ? `, ${est.missingCount} missing on server` : "")
+          + `). This value is saved so the home notice stays up to date.`
+        );
+        // Offer a ready-to-paste pack-meta.json snippet for the site owner
+        try {
+          console.info("[Codex Arcane] pack-meta.json total_bytes =", total);
+          console.info(JSON.stringify({ total_bytes: total, measured_at: new Date().toISOString() }, null, 2));
+        } catch {}
+      } catch (err) {
+        hint(`Measure failed: ${err.message || err}`);
+      }
+      btnMeasure.disabled = false;
+    };
+  }
 
   const btnDl = $("#btn-dl-pack");
   if (btnDl) {
     btnDl.onclick = async () => {
       btnDl.disabled = true;
-      hint("Collecting all categories…");
       try {
-        const { payload, rawBytes, compressedBlob, compressedBytes, imageNames } = await buildOfflinePack({
-          slim: true,
-          onProgress: (d, total, name) => { hint(`Fetching lists ${d}/${total}: ${name || ""}…`); },
-        });
-        const imgCount = imageNames.size;
+        let total = readCachedPackBytes();
+        if (!total) {
+          hint("Checking total size…");
+          total = await ensurePackSizeKnown(setSizeNotice);
+        } else {
+          setSizeNotice(total, "cached");
+        }
         const ok = confirm(
-          `Download FULL offline pack (data + images)?\n\n` +
-          `Category data (compressed): about ${formatBytes(compressedBytes)}\n` +
-          `Images found: ${imgCount.toLocaleString()} files (size depends on each icon; often tens to a few hundred MB total)\n\n` +
-          `Everything is saved in durable browser storage AND as one .zip file on your device.\n` +
-          `Clearing normal cache usually keeps this; clearing all site data does not — keep the zip.\n\nContinue?`
+          `Download the full offline pack?\n\n` +
+          `About ${formatBytes(total || 0)} of storage on this device.\n\n` +
+          `Includes lists and images. A zip backup will also download.\n` +
+          `When it finishes, Chrome may ask you to install the app.\n\nContinue?`
         );
         if (!ok) {
           hint("Download cancelled.");
           btnDl.disabled = false;
           return;
         }
+        hint("Collecting all categories…");
+
+        const { payload, rawBytes, compressedBlob, compressedBytes, imageNames } = await buildOfflinePack({
+          slim: true,
+          onProgress: (d, total, name) => { hint(`Fetching lists ${d}/${total}: ${name || ""}…`); },
+        });
+        const imgCount = imageNames.size;
         hint(`Downloading ${imgCount} images…`);
-        const imgResult = await downloadAllImages(imageNames, (done, total, okN, failN, bytes) => {
-          hint(`Images ${done}/${total} (saved ${okN}, missing ${failN}) · ${formatBytes(bytes)}…`);
+        const imgResult = await downloadAllImages(imageNames, (done, total, okN, failN, bytes, skipped) => {
+          const sk = skipped ? `, reused ${skipped}` : "";
+          hint(`Images ${done}/${total} (saved ${okN}${sk}, missing ${failN}) · ${formatBytes(bytes)}…`);
         });
         await hydrateOfflineImageMap();
         hint("Building zip file…");
@@ -752,7 +1197,13 @@ function wireOfflinePanel() {
         });
         const fname = `codex-arcane-offline-${new Date().toISOString().slice(0, 10)}.zip`;
         downloadBlob(zipBlob, fname);
-        hint(`Done. Pack ${formatBytes(zipBlob.size)} · ${imgResult.ok} images (${formatBytes(imgResult.bytes)}). Keep the zip as backup.`);
+        const miss = (imgResult.failed && imgResult.failed.length)
+          ? ` Missing ${imgResult.failed.length} (not on server or bad name — re-upload those images, then run pack again).`
+          : "";
+        if (zipBlob.size > 0) writeCachedPackBytes(zipBlob.size);
+        setSizeNotice(zipBlob.size, "measured");
+        hint(`Done. Pack ${formatBytes(zipBlob.size)} · ${imgResult.ok} images (${formatBytes(imgResult.bytes)}).${miss} Keep the zip as backup.`);
+        await offerPwaInstall(hint);
       } catch (err) {
         hint(`Could not build pack: ${err.message || err}`);
       }
@@ -835,13 +1286,11 @@ function wireOfflinePanel() {
 // Home page: one card per higher category (like Equipment) with how many items it holds. Pressing one opens the menu on it.
 function renderHome() {
   $("#items").className = "home";
-  $("#items").innerHTML = `<div class="home-top">${offlinePanelHtml()}</div>
-    <div class="hg-grid">${state.groups.filter((g) => g.cats.length).map((g) => {
+  $("#items").innerHTML = `<div class="hg-grid">${state.groups.filter((g) => g.cats.length).map((g) => {
     const n = g.cats.reduce((t, c) => t + c.count, 0);
     const unit = isSectioned(g) ? (n === 1 ? "skill" : "skills") : (n === 1 ? "item" : "items");
     return `<button class="hg-card" type="button" data-g="${esc(g.id)}"><strong>${esc(g.name)}</strong>${isSectioned(g) ? "" : `<span>${n.toLocaleString()} ${unit}</span>`}</button>`;
   }).join("")}</div>`;
-  wireOfflinePanel();
 }
 
 function showHome() {

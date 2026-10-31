@@ -2,19 +2,8 @@ const cfg = window.GEAR_CONFIG || {};
 const $ = (s) => document.querySelector(s);
 const msg = (t) => ($("#msg").textContent = t);
 const pretty = (id) => id.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-// Name shown on the website for a dropped file: items_enhancercrysta_armor.json -> "Enhancer Crysta (Armor)"
-const nameFromFile = (stem) => {
-  const m = String(stem).match(/^(?:items[-_ ]?)?enhancer[-_ ]?crysta[-_ ]*\(?([a-z]+)\)?$/i);
-  return m ? `Enhancer Crysta (${m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase()})` : pretty(stem);
-};
 const slug = (s) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-
-// A group named "Skill Database" is split into sections; each category in it is filed under one of them.
-const SKILL_SECTIONS = ["Assist", "Buff", "Other", "Weapon"];
-const isSectioned = (g) => !!g && (Array.isArray(g.sections) || /^skill database$/i.test(g.name || ""));
-const sectionsOf = (g) => (Array.isArray(g.sections) && g.sections.length ? g.sections : SKILL_SECTIONS);
-const matchSection = (g, name) => sectionsOf(g).find((x) => x.toLowerCase() === String(name || "").trim().toLowerCase()) || "Other";
 
 if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !cfg.ownerUsername) {
   msg("Fill in config.js first (see SETUP.md).");
@@ -54,16 +43,11 @@ function start() {
     } catch (err) { return { error: { message: err.message || String(err) } }; }
   }
   // Puts a category in exactly one group (removing it from any other, such as Unsorted).
-  // In a sectioned group (Skill Database) it also gets a section; without one given, the old section is kept.
-  function placeCategory(id, name, groupId, section) {
+  function placeCategory(id, name, groupId) {
     if (!id) return null;
     if (!Array.isArray(structure.groups)) structure.groups = [];
-    let prev = null;
     structure.groups.forEach((g) => {
-      if (g && Array.isArray(g.categories)) {
-        prev = prev || g.categories.find((c) => c.id === id) || null;
-        g.categories = g.categories.filter((c) => c.id !== id);
-      }
+      if (g && Array.isArray(g.categories)) g.categories = g.categories.filter((c) => c.id !== id);
     });
     let grp = structure.groups.find((g) => g && g.id === groupId)
       || structure.groups.find((g) => g && g.id !== "unsorted")
@@ -73,9 +57,11 @@ function start() {
       structure.groups.push(grp);
     }
     if (!Array.isArray(grp.categories)) grp.categories = [];
-    const entry = { id, name: name || prev?.name || pretty(id) };
-    if (isSectioned(grp)) entry.section = matchSection(grp, section ?? prev?.section);
-    grp.categories.push(entry);
+    if (!grp.categories.some((c) => c.id === id)) grp.categories.push({ id, name: name || pretty(id) });
+    else {
+      const c = grp.categories.find((x) => x.id === id);
+      if (c && name) c.name = name;
+    }
     open.add(grp.id);
     return grp;
   }
@@ -108,53 +94,37 @@ function start() {
     return n >= 1 && n === items.length;
   }
 
-  /** The Skill Database group (with its Assist / Buff / Other / Weapon sections). Created if missing. */
-  function ensureSkillDb() {
-    let g = structure.groups.find((x) => x.id === "skill-database" || /^skill database$/i.test(x.name || ""));
-    if (!g) {
-      g = { id: "skill-database", name: "Skill Database", sections: [...SKILL_SECTIONS], categories: [] };
-      structure.groups.push(g);
-    }
-    if (!Array.isArray(g.sections)) g.sections = [...SKILL_SECTIONS];
-    return g.id;
+  /** Ensure the four Coryn skill groups exist for the owner panel. */
+  function ensureSkillGroups() {
+    for (const name of ["Weapon", "Buff", "Assist", "Other"]) ensureGroup(name);
   }
 
   /**
-   * Upload each SkillTree as its own category in Skill Database, filed under the section the scraper recorded
-   * (Weapon / Buff / Assist / Other). Used for skilldatabase_all.json and for any JSON that is a list of skill trees.
+   * Upload each SkillTree as its own category under Weapon/Buff/Assist/Other.
+   * Used when the scraper file is skilldatabase_all.json (many trees in one list).
    */
   async function uploadSkillTreesSplit(items, report) {
-    const gid = ensureSkillDb();
-    const db = structure.groups.find((x) => x.id === gid);
+    ensureSkillGroups();
     let ok = 0;
     for (const tree of items) {
       const name = tree.name || tree.id || "Skill Tree";
       const id = slug(String(name));
       if (!id) { report.push(`Skipped tree with no name`); continue; }
-      const section = matchSection(db, tree.group || tree.skill_group);
-      const file2 = new File([JSON.stringify([tree])], `${id}.json`, { type: "application/json" });
-      const n = await uploadJson(id, file2, gid, { skipPreview: true });
+      const gName = tree.group || tree.skill_group || "Other";
+      const targetGroup = ensureGroup(gName);
+      const one = [tree];
+      const file2 = new File([JSON.stringify(one)], `${id}.json`, { type: "application/json" });
+      const n = await uploadJson(id, file2, targetGroup, { skipPreview: true });
       if (n === false) { report.push(`${name}: failed`); continue; }
-      placeCategory(id, name, gid, section);
+      placeCategory(id, name, targetGroup);
       ok++;
-      report.push(`Added/updated ${name} \u2192 ${db.name} \u203A ${section}`);
+      report.push(`Added/updated ${name} → ${gName}`);
     }
     try { await saveStructure(); } catch {}
     return ok;
   }
 
-  const setAddGroup = (id) => { const s = $("#newgroup"); if ([...s.options].some((o) => o.value === id)) s.value = id; syncSection(); };
-
-  // The Section picker next to Group only shows when the chosen group is sectioned (Skill Database).
-  function syncSection() {
-    const g = structure.groups.find((x) => x.id === $("#newgroup").value);
-    const on = isSectioned(g);
-    $("#secwrap").hidden = !on;
-    if (on) {
-      const cur = $("#newsection").value;
-      $("#newsection").innerHTML = sectionsOf(g).map((x) => `<option${x === cur ? " selected" : ""}>${esc(x)}</option>`).join("");
-    }
-  }
+  const setAddGroup = (id) => { const s = $("#newgroup"); if ([...s.options].some((o) => o.value === id)) s.value = id; };
 
   sb.auth.onAuthStateChange((_event, session) => {
     const user = session?.user;
@@ -205,26 +175,6 @@ function start() {
 
   function render() {
     const opts = (sel) => structure.groups.map((g) => `<option value="${esc(g.id)}"${g.id === sel ? " selected" : ""}>${esc(g.name)}</option>`).join("");
-    const secOpts = (g, sel) => [...new Set([...sectionsOf(g), ...(sel ? [sel] : [])])].map((x) => `<option${x === sel ? " selected" : ""}>${esc(x)}</option>`).join("");
-    const row = (g, c) => `
-          <li data-cat="${esc(c.id)}"><span><strong>${esc(c.name)}</strong></span>
-            <span><select data-move="${esc(c.id)}" aria-label="Move ${esc(c.name)} to group" title="Move to group">${opts(g.id)}</select>
-            ${isSectioned(g) ? `<select data-sec-of="${esc(c.id)}" aria-label="Section for ${esc(c.name)}" title="Section (Assist / Buff / Other / Weapon)">${secOpts(g, c.section || "Other")}</select>` : ""}
-            <button data-act="ren-cat" data-id="${esc(c.id)}">Rename</button>
-            <button class="dropbtn" data-act="replace" data-drop="cat" data-id="${esc(c.id)}" title="Drop a JSON file here, or press to choose one" aria-label="Replace ${esc(c.name)} items: drop a JSON file here or press to choose one">JSON</button>
-            <button class="dropbtn" data-act="images" data-drop="images" data-id="${esc(c.id)}" title="Drop image files or a folder here, or press to choose images" aria-label="Upload images for ${esc(c.name)}: drop image files here or press to choose them">Image</button>
-            <button data-act="del-cat" data-id="${esc(c.id)}" class="danger">Delete</button></span></li>`;
-    const rowsOf = (g) => {
-      if (!g.categories.length) return `<li class="muted">No categories in this group yet.</li>`;
-      if (!isSectioned(g)) return g.categories.map((c) => row(g, c)).join("");
-      const names = [...new Set([...sectionsOf(g), ...g.categories.map((c) => c.section).filter(Boolean)])];
-      let out = g.categories.filter((c) => !c.section).map((c) => row(g, c)).join("");
-      for (const n of names) {
-        const list = g.categories.filter((c) => (c.section || "").toLowerCase() === n.toLowerCase());
-        if (list.length) out += `<li class="sec-label">${esc(n)} <small>${list.length}</small></li>${list.map((c) => row(g, c)).join("")}`;
-      }
-      return out;
-    };
     $("#tree").innerHTML = structure.groups.length
       ? structure.groups.map((g) => `
         <div class="grp">
@@ -233,53 +183,21 @@ function start() {
             <svg class="chev" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
             <span>${esc(g.name)}</span><small>${g.categories.length}<span class="w"> ${g.categories.length === 1 ? "category" : "categories"}</span></small></button>
           <span><button data-act="ren-group" data-g="${esc(g.id)}">Rename</button> <button data-act="del-group" data-g="${esc(g.id)}" class="danger">Delete</button></span></div>
-        <ul class="rows"${open.has(g.id) ? "" : " hidden"}>${rowsOf(g)}</ul></div>`).join("")
+        <ul class="rows"${open.has(g.id) ? "" : " hidden"}>${g.categories.length ? g.categories.map((c) => `
+          <li data-cat="${esc(c.id)}"><span><strong>${esc(c.name)}</strong></span>
+            <span><select data-move="${esc(c.id)}" aria-label="Move ${esc(c.name)} to group" title="Move to group (Weapon / Buff / Assist / Other)">${opts(g.id)}</select>
+            <button data-act="ren-cat" data-id="${esc(c.id)}">Rename</button>
+            <button class="dropbtn" data-act="replace" data-drop="cat" data-id="${esc(c.id)}" title="Drop a JSON file here, or press to choose one" aria-label="Replace ${esc(c.name)} items: drop a JSON file here or press to choose one">JSON</button>
+            <button class="dropbtn" data-act="images" data-drop="images" data-id="${esc(c.id)}" title="Drop image files or a folder here, or press to choose images" aria-label="Upload images for ${esc(c.name)}: drop image files here or press to choose them">Image</button>
+            <button data-act="del-cat" data-id="${esc(c.id)}" class="danger">Delete</button></span></li>`).join("")
+          : `<li class="muted">No categories in this group yet.</li>`}</ul></div>`).join("")
       : `<p class="muted">No groups yet. Add your first group below, for example Equipment.</p>`;
     $("#newgroup").innerHTML = opts($("#newgroup").value);
-    syncSection();
-    $("#migrate-skills").hidden = !oldSkillGroups().length;
   }
-
-  // Older uploads put Weapon, Buff, Assist and Other at the top level. This finds them so they can be moved into Skill Database.
-  const oldSkillGroups = () => structure.groups.filter((g) => !/^skill database$/i.test(g.name || "") && g.id !== "skill-database"
-    && SKILL_SECTIONS.some((x) => x.toLowerCase() === (g.name || "").trim().toLowerCase()) && g.categories.length);
 
   const findCat = (id) => {
     for (const g of structure.groups) { const c = g.categories.find((x) => x.id === id); if (c) return { g, c }; }
   };
-
-  // Which category of your site a scraped file belongs to: items_armor.json -> Armor, items_1handedsword.json ->
-  // 1 Handed Sword, items_enhancercrysta_armor.json -> Enhancer Crysta (Armor). Compares the file name with the ids and names
-  // of your categories (ignoring spaces, case and punctuation). A scraped item list never matches a Skill Database tree.
-  const nk = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const stemOf = (fileName) => String(fileName).replace(/\.json$/i, "").replace(/^(items|monsters|maps|quests)_/i, "").replace(/^skilldatabase_/i, "");
-  function matchExistingCat(fileName) {
-    const stem = stemOf(fileName);
-    const keys = new Set([nk(stem), nk(nameFromFile(stem))]);
-    const isSkillDb = (g) => g.id === "skill-database" || /^skill database$/i.test(g.name || "");
-    for (const g of structure.groups) {
-      if (isSkillDb(g)) continue;
-      const c = g.categories.find((x) => keys.has(nk(x.id)) || keys.has(nk(x.name)));
-      if (c) return { g, c };
-    }
-    return null;
-  }
-
-  // Category ids are file names (data/<id>.json) shared by the whole site. Two categories with the same
-  // name in different groups (Equipment > Dagger and Skill Database > Dagger) must not share one file,
-  // so a name that is taken by ANOTHER group gets the group's name in front: equipment-dagger.
-  function freeId(name, groupId) {
-    const base = slug(name);
-    if (!base) return "";
-    const taken = (id) => files.includes(id) || !!findCat(id);
-    const mine = (id) => findCat(id)?.g.id === groupId;
-    if (!taken(base) || mine(base)) return base;
-    const g = structure.groups.find((x) => x.id === groupId);
-    const prefix = slug(g?.name || groupId || "");
-    let id = prefix ? slug(`${prefix} ${name}`) : `${base}-2`;
-    for (let n = 2; taken(id) && !mine(id); n++) id = slug(`${prefix} ${name} ${n}`);
-    return id;
-  }
 
   // Shows what is about to be uploaded and warns about common problems before anything is replaced.
   async function confirmPreview(id, items, file, groupId) {
@@ -386,36 +304,14 @@ function start() {
   };
 
   $("#tree").onchange = (e) => {
-    const sid = e.target.dataset.secOf;
-    if (sid) {  // change which section (Assist / Buff / Other / Weapon) a category is filed under
-      const { g, c } = findCat(sid);
-      c.section = e.target.value;
-      open.add(g.id);
-      return saveStructure(`${c.name} moved to ${g.name} \u203A ${c.section}.`);
-    }
     const id = e.target.dataset.move;
     if (!id) return;
     const { g, c } = findCat(id);
     const to = structure.groups.find((x) => x.id === e.target.value);
     g.categories = g.categories.filter((x) => x !== c);
-    if (isSectioned(to)) c.section = matchSection(to, c.section); else delete c.section;
     to.categories.push(c);
     open.add(to.id);
-    saveStructure(`${c.name} moved to ${to.name}${c.section ? ` \u203A ${c.section}` : ""}.`);
-  };
-
-  $("#newgroup").onchange = syncSection;
-  $("#migrate-skills").onclick = async () => {
-    const old = oldSkillGroups();
-    const n = old.reduce((t, g) => t + g.categories.length, 0);
-    if (!old.length || !confirm(`Move ${n} categories from the groups ${old.map((g) => g.name).join(", ")} into Skill Database, filed under sections with the same names?`)) return;
-    const dbId = ensureSkillDb();
-    const db = structure.groups.find((x) => x.id === dbId);
-    for (const g of old) for (const c of g.categories) db.categories.push({ id: c.id, name: c.name, section: matchSection(db, g.name) });
-    structure.groups = structure.groups.filter((g) => !old.includes(g));
-    open.add(db.id);
-    await saveStructure(`Moved ${n} categories into Skill Database.`);
-    setAddGroup(db.id);
+    saveStructure(`${c.name} moved to ${to.name}.`);
   };
 
   $("#expand-all").onclick = () => { structure.groups.forEach((g) => open.add(g.id)); render(); };
@@ -440,20 +336,11 @@ function start() {
     $("#newimg").textContent = stagedImages.length ? `Image (${stagedImages.length})` : "Image";
     $("#newimg").title = stagedImages.length ? `${stagedImages.length} picture(s) chosen` : "Drop image files or a folder here, or press to choose images";
   }
-  async function stageJson(file) {
+  function stageJson(file) {
     if (!file) return;
     stagedJson = file;
     const box = $("#newname");
-    let items = null;
-    try { items = JSON.parse(await file.text()); } catch {}
-    const tree = Array.isArray(items) && isSkillTreeList(items) ? items : null;
-    if (!box.value.trim()) box.value = tree && tree.length === 1 && tree[0].name ? tree[0].name : nameFromFile(file.name.replace(/\.json$/i, "").replace(/^skilldatabase_/, ""));
-    if (tree) {  // a skill tree goes to Skill Database under the section the scraper recorded; both can still be changed before pressing Add
-      const gid = ensureSkillDb();
-      render();
-      setAddGroup(gid);
-      $("#newsection").value = matchSection(structure.groups.find((x) => x.id === gid), tree[0].group || tree[0].skill_group);
-    }
+    if (!box.value.trim()) box.value = pretty(file.name.replace(/\.json$/i, ""));
     showStaged();
     msg(`${file.name} chosen. Press Add category to save it.`);
   }
@@ -474,10 +361,9 @@ function start() {
 
   $("#addcat").onclick = async () => {
     if (busy) return msg("Still uploading. Wait for it to finish.");
-    const name = $("#newname").value.trim(), groupId = $("#newgroup").value, sectionId = $("#secwrap").hidden ? undefined : $("#newsection").value;
-    if (!slug(name)) return msg("Type a category name first.");
+    const name = $("#newname").value.trim(), id = slug(name), groupId = $("#newgroup").value;
+    if (!id) return msg("Type a category name first.");
     if (!structure.groups.length || !groupId) return msg("Add a group first, for example Equipment.");
-    const id = freeId(name, groupId);
     if (files.includes(id)) return msg("A category with that name already exists. Use its JSON button in the list to replace it instead.");
     busy = true;
     try {
@@ -489,7 +375,7 @@ function start() {
         if (error) return msg(`Couldn't create the category: ${error.message}`);
         files.push(id);
       }
-      const grp = placeCategory(id, name, groupId, sectionId);
+      const grp = placeCategory(id, name, groupId);
       let extra = "";
       if (stagedImages.length) {
         const { done, failed } = await uploadImages(stagedImages);
@@ -498,8 +384,7 @@ function start() {
       stagedJson = null; stagedImages = [];
       $("#newname").value = "";
       showStaged();
-      const added = grp.categories.find((c) => c.id === id);
-      await saveStructure(`${name} added to ${grp.name}${added?.section ? ` \u203A ${added.section}` : ""}.${extra}`);
+      await saveStructure(`${name} added to ${grp.name}.${extra}`);
       setAddGroup(grp.id);
     } finally { busy = false; }
   };
@@ -579,39 +464,36 @@ function start() {
           const report = [];
           const jsonFiles = j.filter((f) => !/structure_hint|needs_review/i.test(f.name));
           if (jsonFiles.length > 1) {
-            if (!confirm(`Upload ${jsonFiles.length} JSON files now? Categories you already have (matched by name) will be replaced; new ones are added. (One confirmation — you will not be asked for each file.)`)) {
+            if (!confirm(`Upload ${jsonFiles.length} JSON files now? Categories with the same name will be replaced. (One confirmation — you will not be asked for each file.)`)) {
               msg("Bulk upload cancelled.");
               return;
             }
           }
           for (const file of jsonFiles) {
+            let rawName = file.name.replace(/\.json$/i, "").replace(/^items_/, "").replace(/^monsters_/, "").replace(/^maps_/, "").replace(/^quests_/, "").replace(/^skilldatabase_/, "");
+            let name = pretty(rawName);
+            let id = slug(name);
+            if (!id) { report.push(`Skipped ${file.name}`); continue; }
             let items = null;
             try { items = JSON.parse(await file.text()); } catch { report.push(`Skipped ${file.name}: invalid JSON`); continue; }
             if (!Array.isArray(items)) { report.push(`Skipped ${file.name}: not a JSON list`); continue; }
-            // skilldatabase_all (or any list of skill trees) → one category per tree, filed in Skill Database by section
-            if (isSkillTreeList(items)) {
+            // skilldatabase_all: one file, many trees → split into Weapon/Buff/Assist/Other
+            if (isSkillTreeList(items) && items.length > 1) {
               report.push(`Splitting ${file.name} into ${items.length} skill trees by group...`);
               await uploadSkillTreesSplit(items, report);
               continue;
             }
             const file2 = new File([JSON.stringify(items)], file.name, { type: "application/json" });
             const gName = groupFromItems(items);
-            const match = matchExistingCat(file.name);           // a category you already have: replace its items, keep its place
-            let id, name, targetGroup;
-            if (match) {
-              id = match.c.id; name = match.c.name; targetGroup = match.g.id;
-            } else {
-              name = nameFromFile(stemOf(file.name));
-              targetGroup = gName ? ensureGroup(gName) : groupId;
-              if (!targetGroup && !structure.groups.length) { report.push(`Skipped ${file.name}: add a group first`); continue; }
-              id = freeId(name, targetGroup);               // never reuse a file name that belongs to another group
-              if (!id) { report.push(`Skipped ${file.name}`); continue; }
+            const targetGroup = gName ? ensureGroup(gName) : groupId;
+            if (!targetGroup && !structure.groups.length) {
+              report.push(`Skipped ${file.name}: add a group first`); continue;
             }
-            const exists = !!match;
+            const exists = files.includes(id);
             const n = await uploadJson(id, file2, targetGroup, { skipPreview: jsonFiles.length > 1 });
             if (n === false) { report.push(`${file.name}: cancelled or failed`); continue; }
-            if (!match) placeCategory(id, name, targetGroup || groupId);
-            report.push(`${exists ? "Updated" : "Added"} ${name} (${n} items).`);
+            placeCategory(id, name, targetGroup || groupId);
+            report.push(`${exists ? "Updated" : "Added"} ${name} (${n} items)${gName ? ` → ${gName}` : ""}.`);
           }
           try { await saveStructure(); } catch {}
           if (imgs.length) {
@@ -643,46 +525,35 @@ function start() {
       const report = [];
 
       for (const file of jsons) {
-        let id, name, replacing = false, match = null;
-        let parsed = null;
-        try { parsed = JSON.parse(await file.text()); } catch {}
-        const file2 = parsed ? new File([JSON.stringify(parsed)], file.name, { type: "application/json" }) : file;
-        const skillList = Array.isArray(parsed) && isSkillTreeList(parsed);
-        const gName = Array.isArray(parsed) && !skillList ? groupFromItems(parsed) : null;
-        let targetGroup = gName ? ensureGroup(gName) : groupId;
-        let targetSection = $("#secwrap").hidden ? undefined : $("#newsection").value;
+        let id, name, replacing = false;
         if (rowId) {                                   // dropped on a category's Drop file button: replace that category
           id = rowId;
           name = findCat(id)?.c.name || pretty(id);
           replacing = true;
         } else {
-          name = (jsons.length === 1 && ($("#newname").value.trim())) || nameFromFile(file.name.replace(/\.json$/i, "").replace(/^skilldatabase_/, ""));
-          const typed = jsons.length === 1 && $("#newname").value.trim();
-          match = !typed && !skillList ? matchExistingCat(file.name) : null;   // e.g. items_armor.json -> your Armor
-          if (match) { id = match.c.id; name = match.c.name; targetGroup = match.g.id; }
-          else {
-            if (skillList) targetGroup = ensureSkillDb();   // skill trees always belong in Skill Database
-            id = freeId(name, targetGroup);                 // a name used by another group gets its own file
-          }
+          name = (jsons.length === 1 && ($("#newname").value.trim())) || pretty(file.name.replace(/\.json$/i, "").replace(/^skilldatabase_/, ""));
+          id = slug(name);
           if (!id) { report.push(`Skipped ${file.name}: couldn't make a category name from it.`); continue; }
           if (files.includes(id)) {
-            if (jsons.length === 1 && !confirm(`${name} already exists. Replace its items with ${file.name}?`)) { report.push(`Skipped ${file.name}.`); continue; }
+            if (!confirm(`${name} already exists. Replace its items with ${file.name}?`)) { report.push(`Skipped ${file.name}.`); continue; }
             replacing = true;
           } else if (!structure.groups.length) {
             report.push(`Skipped ${file.name}: add a group first, for example Equipment.`);
             continue;
           }
         }
-        if (skillList && !findCat(id)) {  // a new skill tree: section from the scrape
-          targetSection = matchSection(structure.groups.find((x) => x.id === targetGroup), parsed[0].group || parsed[0].skill_group);
-        }
+        let parsed = null;
+        try { parsed = JSON.parse(await file.text()); } catch {}
+        const file2 = parsed ? new File([JSON.stringify(parsed)], file.name, { type: "application/json" }) : file;
+        const gName = Array.isArray(parsed) ? groupFromItems(parsed) : null;
+        const targetGroup = gName ? ensureGroup(gName) : groupId;
         const n = await uploadJson(id, file2, targetGroup);
         if (n === false) { report.push(`${file.name}: ${$("#msg").textContent}`); continue; }
         if (!replacing || !findCat(id)) {
-          placeCategory(id, name, targetGroup, targetSection);
+          placeCategory(id, name, targetGroup);
           $("#newname").value = "";
           await saveStructure();
-        } else if (gName && !match) {
+        } else if (gName) {
           placeCategory(id, findCat(id)?.c.name || name, targetGroup);
           await saveStructure();
         }
@@ -744,3 +615,140 @@ function start() {
   // Safety: never leave the page locked after load
   unlockUi();
 }
+
+
+  // ---- App version + pack size (owner only) ----
+  function nextAppVersion(prev) {
+    const m = String(prev || "").trim().match(/^(\d+)\.(\d+)\.(\d+)$/);
+    if (m) return `${+m[1]}.${+m[2]}.${+m[3] + 1}`;
+    // date-based first version
+    const d = new Date();
+    return `1.0.0`;
+  }
+  async function loadPublishedMeta() {
+    try {
+      const r = await download("config/app-version.json");
+      if (!r) return null;
+      return await r.json();
+    } catch { return null; }
+  }
+  async function refreshPubVer() {
+    const elV = $("#pub-ver"), elB = $("#pub-bytes");
+    if (!elV) return;
+    const meta = await loadPublishedMeta();
+    if (!meta) { elV.textContent = "none yet"; if (elB) elB.textContent = ""; return; }
+    elV.textContent = meta.version || "—";
+    if (elB) elB.textContent = meta.total_bytes ? `${(meta.total_bytes/1048576).toFixed(1)} MB` : "";
+  }
+  let lastMeasure = null;
+  const btnM = $("#btn-measure-pack");
+  const btnP = $("#btn-publish-ver");
+  const out = $("#measure-out");
+  if (btnM) {
+    btnM.onclick = async () => {
+      if (!window.opener && !location.pathname.includes("admin")) { /* ok */ }
+      btnM.disabled = true;
+      if (out) out.textContent = "Measuring… open the main site in another tab if this fails (needs app helpers).";
+      try {
+        // Measure using public HEAD from admin context — duplicate light estimate
+        const base = `${cfg.supabaseUrl}/storage/v1/object/public/site`;
+        const listRes = await fetch(`${cfg.supabaseUrl}/storage/v1/object/list/site`, {
+          method: "POST",
+          headers: { apikey: cfg.supabaseAnonKey, Authorization: `Bearer ${cfg.supabaseAnonKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ prefix: "data", limit: 500 }),
+        });
+        const files = (await listRes.json()).filter((f) => f.name.endsWith(".json"));
+        let dataBytes = 0, imgBytes = 0, imgN = 0, miss = 0;
+        const names = new Set();
+        for (const f of files) {
+          const url = `${base}/data/${encodeURIComponent(f.name)}`;
+          try {
+            const h = await fetch(url, { method: "HEAD", cache: "no-cache" });
+            const len = parseInt(h.headers.get("content-length") || "0", 10);
+            dataBytes += len > 0 ? len : 150000;
+            const r = await fetch(url, { cache: "force-cache" });
+            if (r.ok) {
+              const items = await r.json();
+              const walk = (o) => {
+                if (!o || typeof o !== "object") return;
+                if (Array.isArray(o)) return o.forEach(walk);
+                for (const [k, v] of Object.entries(o)) {
+                  if (/image|icon|src|file/i.test(k) && typeof v === "string" && /\.(png|jpe?g|gif|webp|svg)$/i.test(v)) {
+                    names.add(v.split(/[\\/]/).pop().split("?")[0]);
+                  } else if (typeof v === "object") walk(v);
+                }
+              };
+              walk(items);
+            }
+          } catch {}
+          if (out) out.textContent = `Lists… ${files.indexOf(f)+1}/${files.length}`;
+        }
+        const arr = [...names];
+        imgN = arr.length;
+        let i = 0;
+        async function worker() {
+          while (i < arr.length) {
+            const name = arr[i++];
+            try {
+              const h = await fetch(`${base}/images/${encodeURIComponent(name)}`, { method: "HEAD", cache: "no-cache" });
+              if (!h.ok) { miss++; continue; }
+              const len = parseInt(h.headers.get("content-length") || "0", 10);
+              imgBytes += len > 0 ? len : 8000;
+            } catch { miss++; }
+            if (out && i % 40 === 0) out.textContent = `Images… ${i}/${arr.length}`;
+          }
+        }
+        await Promise.all(Array.from({ length: 12 }, () => worker()));
+        const total = dataBytes + imgBytes;
+        lastMeasure = { total_bytes: total, data_bytes: dataBytes, image_bytes: imgBytes, image_count: imgN, missing: miss };
+        if (out) out.textContent = `Measured ~${(total/1048576).toFixed(1)} MB (lists ${(dataBytes/1048576).toFixed(1)} + images ${(imgBytes/1048576).toFixed(1)}, ${imgN} files, ${miss} missing). Press Publish new version.`;
+      } catch (err) {
+        if (out) out.textContent = `Measure failed: ${err.message || err}`;
+      }
+      btnM.disabled = false;
+    };
+  }
+  if (btnP) {
+    btnP.onclick = async () => {
+      btnP.disabled = true;
+      try {
+        const prev = await loadPublishedMeta();
+        const version = nextAppVersion(prev && prev.version);
+        const total_bytes = (lastMeasure && lastMeasure.total_bytes) || (prev && prev.total_bytes) || 0;
+        if (!total_bytes) {
+          alert("Measure pack size first (or a previous total is missing).");
+          btnP.disabled = false;
+          return;
+        }
+        const body = {
+          version,
+          total_bytes,
+          data_bytes: lastMeasure?.data_bytes || null,
+          image_bytes: lastMeasure?.image_bytes || null,
+          image_count: lastMeasure?.image_count || null,
+          missing: lastMeasure?.missing || null,
+          updated_at: new Date().toISOString(),
+        };
+        const blob = new Blob([JSON.stringify(body, null, 2)], { type: "application/json" });
+        const path = "config/app-version.json";
+        // upload via supabase storage
+        const up = await fetch(`${cfg.supabaseUrl}/storage/v1/object/site/${path}`, {
+          method: "POST",
+          headers: {
+            apikey: cfg.supabaseAnonKey,
+            Authorization: `Bearer ${(await sb.auth.getSession()).data.session?.access_token || cfg.supabaseAnonKey}`,
+            "Content-Type": "application/json",
+            "x-upsert": "true",
+          },
+          body: blob,
+        });
+        if (!up.ok) throw new Error(await up.text());
+        if (out) out.textContent = `Published version ${version} · ${(total_bytes/1048576).toFixed(1)} MB`;
+        await refreshPubVer();
+      } catch (err) {
+        alert("Publish failed: " + (err.message || err));
+      }
+      btnP.disabled = false;
+    };
+  }
+  refreshPubVer();

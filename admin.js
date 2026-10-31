@@ -248,6 +248,23 @@ function start() {
     for (const g of structure.groups) { const c = g.categories.find((x) => x.id === id); if (c) return { g, c }; }
   };
 
+  // Which category of your site a scraped file belongs to: items_armor.json -> Armor, items_1handedsword.json ->
+  // 1 Handed Sword, items_enhancercrysta_armor.json -> Enhancer Crysta (Armor). Compares the file name with the ids and names
+  // of your categories (ignoring spaces, case and punctuation). A scraped item list never matches a Skill Database tree.
+  const nk = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const stemOf = (fileName) => String(fileName).replace(/\.json$/i, "").replace(/^(items|monsters|maps|quests)_/i, "").replace(/^skilldatabase_/i, "");
+  function matchExistingCat(fileName) {
+    const stem = stemOf(fileName);
+    const keys = new Set([nk(stem), nk(nameFromFile(stem))]);
+    const isSkillDb = (g) => g.id === "skill-database" || /^skill database$/i.test(g.name || "");
+    for (const g of structure.groups) {
+      if (isSkillDb(g)) continue;
+      const c = g.categories.find((x) => keys.has(nk(x.id)) || keys.has(nk(x.name)));
+      if (c) return { g, c };
+    }
+    return null;
+  }
+
   // Category ids are file names (data/<id>.json) shared by the whole site. Two categories with the same
   // name in different groups (Equipment > Dagger and Skill Database > Dagger) must not share one file,
   // so a name that is taken by ANOTHER group gets the group's name in front: equipment-dagger.
@@ -562,16 +579,12 @@ function start() {
           const report = [];
           const jsonFiles = j.filter((f) => !/structure_hint|needs_review/i.test(f.name));
           if (jsonFiles.length > 1) {
-            if (!confirm(`Upload ${jsonFiles.length} JSON files now? Categories with the same name will be replaced. (One confirmation — you will not be asked for each file.)`)) {
+            if (!confirm(`Upload ${jsonFiles.length} JSON files now? Categories you already have (matched by name) will be replaced; new ones are added. (One confirmation — you will not be asked for each file.)`)) {
               msg("Bulk upload cancelled.");
               return;
             }
           }
           for (const file of jsonFiles) {
-            let rawName = file.name.replace(/\.json$/i, "").replace(/^items_/, "").replace(/^monsters_/, "").replace(/^maps_/, "").replace(/^quests_/, "").replace(/^skilldatabase_/, "");
-            let name = pretty(rawName);
-            let id = slug(name);
-            if (!id) { report.push(`Skipped ${file.name}`); continue; }
             let items = null;
             try { items = JSON.parse(await file.text()); } catch { report.push(`Skipped ${file.name}: invalid JSON`); continue; }
             if (!Array.isArray(items)) { report.push(`Skipped ${file.name}: not a JSON list`); continue; }
@@ -583,15 +596,22 @@ function start() {
             }
             const file2 = new File([JSON.stringify(items)], file.name, { type: "application/json" });
             const gName = groupFromItems(items);
-            const targetGroup = gName ? ensureGroup(gName) : groupId;
-            if (!targetGroup && !structure.groups.length) {
-              report.push(`Skipped ${file.name}: add a group first`); continue;
+            const match = matchExistingCat(file.name);           // a category you already have: replace its items, keep its place
+            let id, name, targetGroup;
+            if (match) {
+              id = match.c.id; name = match.c.name; targetGroup = match.g.id;
+            } else {
+              name = nameFromFile(stemOf(file.name));
+              targetGroup = gName ? ensureGroup(gName) : groupId;
+              if (!targetGroup && !structure.groups.length) { report.push(`Skipped ${file.name}: add a group first`); continue; }
+              id = freeId(name, targetGroup);               // never reuse a file name that belongs to another group
+              if (!id) { report.push(`Skipped ${file.name}`); continue; }
             }
-            const exists = files.includes(id);
+            const exists = !!match;
             const n = await uploadJson(id, file2, targetGroup, { skipPreview: jsonFiles.length > 1 });
             if (n === false) { report.push(`${file.name}: cancelled or failed`); continue; }
-            placeCategory(id, name, targetGroup || groupId);
-            report.push(`${exists ? "Updated" : "Added"} ${name} (${n} items)${gName ? ` → ${gName}` : ""}.`);
+            if (!match) placeCategory(id, name, targetGroup || groupId);
+            report.push(`${exists ? "Updated" : "Added"} ${name} (${n} items).`);
           }
           try { await saveStructure(); } catch {}
           if (imgs.length) {
@@ -623,7 +643,7 @@ function start() {
       const report = [];
 
       for (const file of jsons) {
-        let id, name, replacing = false;
+        let id, name, replacing = false, match = null;
         let parsed = null;
         try { parsed = JSON.parse(await file.text()); } catch {}
         const file2 = parsed ? new File([JSON.stringify(parsed)], file.name, { type: "application/json" }) : file;
@@ -637,11 +657,16 @@ function start() {
           replacing = true;
         } else {
           name = (jsons.length === 1 && ($("#newname").value.trim())) || nameFromFile(file.name.replace(/\.json$/i, "").replace(/^skilldatabase_/, ""));
-          if (skillList) targetGroup = ensureSkillDb();   // skill trees always belong in Skill Database
-          id = freeId(name, targetGroup);                 // a name used by another group gets its own file
+          const typed = jsons.length === 1 && $("#newname").value.trim();
+          match = !typed && !skillList ? matchExistingCat(file.name) : null;   // e.g. items_armor.json -> your Armor
+          if (match) { id = match.c.id; name = match.c.name; targetGroup = match.g.id; }
+          else {
+            if (skillList) targetGroup = ensureSkillDb();   // skill trees always belong in Skill Database
+            id = freeId(name, targetGroup);                 // a name used by another group gets its own file
+          }
           if (!id) { report.push(`Skipped ${file.name}: couldn't make a category name from it.`); continue; }
           if (files.includes(id)) {
-            if (!confirm(`${name} already exists. Replace its items with ${file.name}?`)) { report.push(`Skipped ${file.name}.`); continue; }
+            if (jsons.length === 1 && !confirm(`${name} already exists. Replace its items with ${file.name}?`)) { report.push(`Skipped ${file.name}.`); continue; }
             replacing = true;
           } else if (!structure.groups.length) {
             report.push(`Skipped ${file.name}: add a group first, for example Equipment.`);
@@ -657,7 +682,7 @@ function start() {
           placeCategory(id, name, targetGroup, targetSection);
           $("#newname").value = "";
           await saveStructure();
-        } else if (gName) {
+        } else if (gName && !match) {
           placeCategory(id, findCat(id)?.c.name || name, targetGroup);
           await saveStructure();
         }

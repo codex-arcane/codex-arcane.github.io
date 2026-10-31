@@ -772,3 +772,28 @@ dialog .sk-page { margin: -.25rem 0; }
 .install-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; }
 .install-panel .btn.secondary { background: var(--panel); color: var(--text); border: 1px solid var(--edge); }
 .install-hint { min-height: 1.2em; margin: .35rem 0 0; font-size: .85rem; }
+
+.pack-size-notice {
+  margin: 0 0 .5rem; padding: .55rem .7rem; border-radius: 8px;
+  background: rgba(122, 74, 20, .08); border: 1px solid var(--edge);
+  font-size: .95rem;
+}
+.pack-size-notice strong { color: var(--accent); }
+
+.dg-app {
+  margin: .75rem .65rem 1rem; padding: .65rem .7rem;
+  border: 1px solid var(--edge); border-radius: 10px; background: var(--panel);
+}
+.dg-app-label {
+  margin: 0 0 .4rem; font-size: .7rem; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+}
+.dg-app-btn {
+  display: block; width: 100%; text-align: left;
+  margin: .25rem 0; padding: .55rem .6rem;
+  border: 1px solid var(--edge); border-radius: 8px;
+  background: rgba(122, 74, 20, .06); color: var(--text);
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+.dg-app-btn:hover { background: rgba(122, 74, 20, .12); }
+.dg-app-hint { margin: .45rem 0 0; font-size: .8rem; line-height: 1.35; min-height: 1.2em; }

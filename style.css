@@ -763,3 +763,12 @@ dialog .sk-page { margin: -.25rem 0; }
 .sx table { border-collapse: collapse; margin: .3rem 0; }
 .sx td, .sx th { padding: .15rem .5rem .15rem 0; vertical-align: top; text-align: left; }
 .sx .cell-link { font-weight: 600; }
+
+.home-top { margin-bottom: 1.25rem; }
+.install-panel {
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; padding: .9rem 1rem;
+}
+.install-panel h2 { font-family: var(--display); font-size: 1.15rem; margin: 0 0 .5rem; }
+.install-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; }
+.install-panel .btn.secondary { background: var(--panel); color: var(--text); border: 1px solid var(--edge); }
+.install-hint { min-height: 1.2em; margin: .35rem 0 0; font-size: .85rem; }

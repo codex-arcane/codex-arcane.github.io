@@ -28,8 +28,8 @@
   <div id="panel" hidden>
     <section>
       <h2>Groups and categories</h2>
-      <p class="muted">Skill trees live in the <strong>Skill Database</strong> group, filed under <strong>Assist</strong>, <strong>Buff</strong>, <strong>Other</strong> or <strong>Weapon</strong>. Drop <code>skilldatabase_all.json</code> (or the whole output folder) on JSON and each tree is filed automatically from the scrape. Move any category with the dropdowns on its row (group, and section for Skill Database). Press a group to open or close its categories. Each category has two drop buttons. <strong>JSON</strong> replaces its items with a JSON file, and <strong>Image</strong> uploads pictures. Drop files on a button, or press it to choose them. All pictures share one folder, so a picture with the same file name replaces the old one.</p>
-      <div class="tree-tools"><button id="expand-all" type="button">Expand all</button><button id="collapse-all" type="button">Collapse all</button><button id="migrate-skills" type="button" hidden title="Weapon, Buff, Assist and Other are separate groups right now. Move them into Skill Database.">Move skill groups into Skill Database</button></div>
+      <p class="muted">Skill trees: drop <code>skilldatabase_all.json</code> (or the whole output folder) on JSON — trees are placed under <strong>Weapon</strong>, <strong>Buff</strong>, <strong>Assist</strong>, <strong>Other</strong> from the scrape. Move any category with the dropdown on its row. Press a group to open or close its categories. Each category has two drop buttons. <strong>JSON</strong> replaces its items with a JSON file, and <strong>Image</strong> uploads pictures. Drop files on a button, or press it to choose them. All pictures share one folder, so a picture with the same file name replaces the old one.</p>
+      <div class="tree-tools"><button id="expand-all" type="button">Expand all</button><button id="collapse-all" type="button">Collapse all</button></div>
       <div id="tree"></div>
 
       <h3>Add a group</h3>
@@ -39,11 +39,10 @@
       </div>
 
       <h3>Add a category</h3>
-      <p class="muted">Type a name, pick the group it belongs to (for Skill Database a <strong>Section</strong> picker appears: Assist, Buff, Other or Weapon), then choose its <strong>JSON</strong> file and any <strong>Image</strong> files (both optional, you can also drop them on the buttons). Press <strong>Add category</strong> to register it in that group.</p>
+      <p class="muted">Type a name, pick the group it belongs to, then choose its <strong>JSON</strong> file and any <strong>Image</strong> files (both optional, you can also drop them on the buttons). Press <strong>Add category</strong> to register it in that group.</p>
       <div class="row-add">
         <input id="newname" placeholder="Category name, e.g. Additional Gear" aria-label="New category name">
         <label class="grp-pick">Group <select id="newgroup" aria-label="Group for the new category"></select></label>
-        <label class="grp-pick" id="secwrap" hidden>Section <select id="newsection" aria-label="Section for the new category"></select></label>
         <button id="newbtn" class="dropbtn" data-drop="stage-json" type="button" title="Drop a JSON file here, or press to choose one">JSON</button>
         <button id="newimg" class="dropbtn" data-drop="stage-img" type="button" title="Drop image files or a folder here, or press to choose images">Image</button>
         <button id="addcat" type="button" class="primary">Add category</button>
@@ -70,5 +69,17 @@
 <script src="config.js"></script>
 <script src="admin.js"></script>
 <script src="ui.js"></script>
+
+<section class="card" id="app-version-card" style="margin:1rem 0;padding:1rem;border:1px solid #ccc;border-radius:8px;">
+  <h2>App version &amp; offline pack size</h2>
+  <p class="muted">Visitors only see size when they download from the menu. Measure here, then publish a new auto version so “Check for updates” works.</p>
+  <p><strong>Current published:</strong> <span id="pub-ver">—</span> · <span id="pub-bytes">—</span></p>
+  <p id="measure-out" class="muted"></p>
+  <p style="display:flex;flex-wrap:wrap;gap:.5rem;">
+    <button type="button" id="btn-measure-pack" class="btn">Measure pack size</button>
+    <button type="button" id="btn-publish-ver" class="btn">Publish new version</button>
+  </p>
+</section>
+
 </body>
 </html>

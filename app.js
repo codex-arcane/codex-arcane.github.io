@@ -1127,12 +1127,18 @@ function entryKind(item, cat) {
   if (!item) return "item";
   if (item.type === "SkillTree" || Array.isArray(item.skills)) return "skilltree";
   if (item.type === "Page" || item.page) return "page";
-  const t = String(item.type || "").toLowerCase();
+  const t = String(item.type || "").toLowerCase().trim();
   const cn = `${cat?.name || ""} ${cat?.id || ""}`.toLowerCase();
+  // Equipment / crysta / materials are always items (e.g. "Normal Crysta" must NOT count as monster)
+  if (/crysta|material|weapon|armor|shield|ore|usable|consumable|additional|special|arrow|bow|sword|staff|katana|knuckle|halberd|dagger|md|magic device/.test(t)
+      || /crysta|material|equip|weapon|armor|ore|usable/.test(cn)) {
+    return "item";
+  }
   if (/\bmaps?\b/.test(cn) || t === "map") return "map";
   if (/\bquests?\b/.test(cn) || t === "quest") return "quest";
-  if (/\bmonsters?\b|\bboss\b|\bmini\b/.test(cn)
-      || /^(boss|mini|normal|event)\b/.test(t)
+  // Monster types on Coryn are exact labels, not "Normal Crysta"
+  if (/\bmonsters?\b/.test(cn)
+      || /^(boss|mini|mini-boss|normal|event|monster)$/i.test(t)
       || item.mtype
       || Array.isArray(item.drops)
       || item.tamable != null

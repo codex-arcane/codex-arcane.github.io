@@ -103,11 +103,15 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 // Icon paths may be Windows-style, so only the file name is used.
 function imgSrc(cat, item) {
   const file = (item.image_file || item.image_url || "").split(/[\\/]/).pop();
-  if (!file || !cat.images) return "";
+  if (!file) return "";
+  const local = offlineLocalSrc(file);
+  if (local) return local;
+  if (!cat.images && !remote) return "";
   return remote
     ? `${CFG.supabaseUrl}/storage/v1/object/public/site/images/${encodeURIComponent(file)}`
     : `${cat.images}/${encodeURIComponent(file)}`;
 }
+
 
 // Categories uploaded from the owner panel: one data/<category>.json file each in Supabase Storage.
 async function loadRemote() {
@@ -164,10 +168,14 @@ async function boot() {
       state.cats = (await res.json()).categories;
       state.groups = [{ id: "all", name: "All", cats: state.cats }];
     }
-  } catch {
-    return empty(remote
-      ? "Couldn't load categories. Check config.js and that supabase-setup.sql was run."
-      : "Couldn't load data/manifest.json. Run scripts/build_manifest.py, and open the site through a web server (not by double-clicking the file).");
+  } catch (err) {
+    // Network/Supabase failed: use durable offline pack if the user downloaded one
+    const ok = await tryBootFromOfflinePack();
+    if (!ok) {
+      return empty(remote
+        ? "Couldn't load categories. Check config.js, or use Offline copy → Load pack from file."
+        : "Couldn't load data/manifest.json. Run scripts/build_manifest.py, or load an offline pack.");
+    }
   }
   if (!state.cats.length) return empty(remote
     ? "No categories yet. Sign in at admin.html and upload a JSON file."
@@ -180,6 +188,8 @@ async function boot() {
   } else {
     loadAll().then(() => rebuildNameIndex()).catch(() => {});
   }
+  // Restore offline images if a previous full pack is in IndexedDB
+  hydrateOfflineImageMap().catch(() => {});
   renderMenu();
   addEventListener("hashchange", route);
   route();
@@ -336,14 +346,502 @@ function updateCrumb() {
   c.textContent = state.cat === FAV ? "Favorites" : remote && g ? `${g.name}${sec} \u203A ${state.cat.name}` : state.cat.name;
 }
 
+
+// ---- Durable offline pack (IndexedDB + real file download) ----
+// Cache API is easy to wipe with "clear cache". IndexedDB survives most cache-only clears.
+// A downloaded .json.gz file on the user's device survives until they delete the file.
+const OFFLINE_DB = "codex-offline";
+const OFFLINE_STORE = "pack";
+const OFFLINE_IMAGES = "images";
+const OFFLINE_KEY = "full";
+/** filename -> blob: URL for offline icons */
+const offlineImgMap = new Map();
+let offlineImagesReady = false;
+
+function openOfflineDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(OFFLINE_DB, 2);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(OFFLINE_STORE)) db.createObjectStore(OFFLINE_STORE);
+      if (!db.objectStoreNames.contains(OFFLINE_IMAGES)) db.createObjectStore(OFFLINE_IMAGES);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbSetPack(record) {
+  const db = await openOfflineDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_STORE, "readwrite");
+    tx.objectStore(OFFLINE_STORE).put(record, OFFLINE_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function idbGetPack() {
+  const db = await openOfflineDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_STORE, "readonly");
+    const req = tx.objectStore(OFFLINE_STORE).get(OFFLINE_KEY);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbPutImage(name, blob) {
+  const db = await openOfflineDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_IMAGES, "readwrite");
+    tx.objectStore(OFFLINE_IMAGES).put(blob, name);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function idbGetImage(name) {
+  const db = await openOfflineDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_IMAGES, "readonly");
+    const req = tx.objectStore(OFFLINE_IMAGES).get(name);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbImageKeys() {
+  const db = await openOfflineDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_IMAGES, "readonly");
+    const req = tx.objectStore(OFFLINE_IMAGES).getAllKeys();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbClearPack() {
+  const db = await openOfflineDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([OFFLINE_STORE, OFFLINE_IMAGES], "readwrite");
+    tx.objectStore(OFFLINE_STORE).delete(OFFLINE_KEY);
+    tx.objectStore(OFFLINE_IMAGES).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function offlineLocalSrc(file) {
+  if (!file) return "";
+  const name = String(file).split(/[\\/]/).pop();
+  return offlineImgMap.get(name) || "";
+}
+
+async function hydrateOfflineImageMap() {
+  for (const u of offlineImgMap.values()) {
+    try { URL.revokeObjectURL(u); } catch {}
+  }
+  offlineImgMap.clear();
+  const keys = await idbImageKeys();
+  for (const name of keys) {
+    const blob = await idbGetImage(name);
+    if (blob) offlineImgMap.set(String(name), URL.createObjectURL(blob));
+  }
+  offlineImagesReady = offlineImgMap.size > 0;
+}
+
+function collectImageNames(items) {
+  const set = new Set();
+  const add = (v) => {
+    if (!v || typeof v !== "string") return;
+    if (/^https?:\/\//i.test(v) && !/\/images\//i.test(v) && !/\/skill\//i.test(v)) {
+      // remote non-site URLs still collected by full URL key later
+    }
+    const name = v.split(/[\\/]/).pop().split("?")[0];
+    if (name && /\.(png|jpe?g|gif|webp|svg)$/i.test(name)) set.add(name);
+    else if (name && !name.includes(" ") && name.length < 120) set.add(name);
+  };
+  const walk = (obj) => {
+    if (!obj || typeof obj !== "object") return;
+    if (Array.isArray(obj)) { obj.forEach(walk); return; }
+    for (const [k, v] of Object.entries(obj)) {
+      if (/image|icon|src|file/i.test(k) && typeof v === "string") add(v);
+      else if (typeof v === "object") walk(v);
+    }
+  };
+  walk(items);
+  return set;
+}
+
+function imageFetchUrl(name) {
+  if (/^https?:\/\//i.test(name)) return name;
+  if (remote) return `${CFG.supabaseUrl}/storage/v1/object/public/site/images/${encodeURIComponent(name)}`;
+  return `images/${encodeURIComponent(name)}`;
+}
+
+async function downloadAllImages(names, onProgress) {
+  const list = [...names];
+  let ok = 0, fail = 0, bytes = 0;
+  const concurrency = 6;
+  let i = 0;
+  async function worker() {
+    while (i < list.length) {
+      const idx = i++;
+      const name = list[idx];
+      try {
+        const r = await fetch(imageFetchUrl(name), { cache: "force-cache" });
+        if (!r.ok) { fail++; continue; }
+        const blob = await r.blob();
+        await idbPutImage(name, blob);
+        bytes += blob.size;
+        ok++;
+      } catch { fail++; }
+      if (onProgress) onProgress(ok + fail, list.length, ok, fail, bytes);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, list.length) }, () => worker()));
+  return { ok, fail, bytes };
+}
+
+async function loadJSZip() {
+  if (window.JSZip) return window.JSZip;
+  await new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js";
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("Could not load zip library"));
+    document.head.append(s);
+  });
+  return window.JSZip;
+}
+
+function formatBytes(n) {
+  if (n == null || n < 0 || !isFinite(n)) return "unknown";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Slim records for storage: drop huge calculator script blobs; keep structure users need. */
+function slimItem(it) {
+  if (!it || typeof it !== "object") return it;
+  const o = { ...it };
+  // calc_scripts can be hundreds of KB per tree — keep a flag, drop the blob for light packs
+  if (o.calc_scripts && String(o.calc_scripts).length > 2000) {
+    o.has_calc_scripts = true;
+    delete o.calc_scripts;
+  }
+  if (Array.isArray(o.skills)) o.skills = o.skills.map(slimItem);
+  return o;
+}
+
+async function gzipBlob(text) {
+  if (typeof CompressionStream === "undefined") {
+    return new Blob([text], { type: "application/json" });
+  }
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  const buf = await new Response(stream).arrayBuffer();
+  return new Blob([buf], { type: "application/gzip" });
+}
+
+async function gunzipToText(blob) {
+  if (blob.type.includes("json") && !blob.type.includes("gzip")) {
+    return blob.text();
+  }
+  if (typeof DecompressionStream === "undefined") {
+    // may already be plain json
+    return blob.text();
+  }
+  try {
+    const stream = blob.stream().pipeThrough(new DecompressionStream("gzip"));
+    return await new Response(stream).text();
+  } catch {
+    return blob.text();
+  }
+}
+
+function dataUrlForCat(id) {
+  if (remote) {
+    return `${CFG.supabaseUrl}/storage/v1/object/public/site/data/${encodeURIComponent(id)}.json`;
+  }
+  return `data/${encodeURIComponent(id)}.json`;
+}
+
+/**
+ * Build a full site data pack (all categories + structure).
+ * Returns { payload, rawBytes, compressedBlob, compressedBytes }.
+ */
+async function buildOfflinePack({ slim = true, onProgress } = {}) {
+  const cats = state.cats || [];
+  const byId = {};
+  let done = 0;
+  for (const c of cats) {
+    let items = state.cache[c.id];
+    if (!items) {
+      try {
+        const r = await fetch(dataUrlForCat(c.id), { cache: "no-cache" });
+        if (r.ok) items = await r.json();
+      } catch {}
+    }
+    if (!Array.isArray(items)) items = [];
+    byId[c.id] = slim ? items.map(slimItem) : items;
+    done++;
+    if (onProgress) onProgress(done, cats.length, c.name);
+  }
+  let structure = { groups: [] };
+  try {
+    if (remote) {
+      const r = await fetch(`${CFG.supabaseUrl}/storage/v1/object/public/site/config/structure.json`, { cache: "no-cache" });
+      if (r.ok) structure = await r.json();
+    }
+  } catch {}
+  const payload = {
+    version: 1,
+    built_at: new Date().toISOString(),
+    slim: !!slim,
+    structure,
+    categories: (cats || []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      section: c.section || "",
+      items: byId[c.id] || [],
+    })),
+  };
+  const text = JSON.stringify(payload);
+  const rawBytes = new Blob([text]).size;
+  const compressedBlob = await gzipBlob(text);
+  const compressedBytes = compressedBlob.size;
+  const imageNames = collectImageNames(payload.categories);
+  return { payload, rawBytes, compressedBlob, compressedBytes, text, imageNames };
+}
+
+function downloadBlob(blob, filename) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+async function applyPackPayload(payload) {
+  if (!payload || !Array.isArray(payload.categories)) throw new Error("Invalid pack file");
+  const cats = [];
+  const used = new Set();
+  for (const block of payload.categories) {
+    const id = block.id;
+    if (!id) continue;
+    const items = Array.isArray(block.items) ? block.items : [];
+    const cat = {
+      id,
+      name: block.name || id,
+      section: block.section || "",
+      count: items.length,
+      files: [],
+      images: true,
+      offline: true,
+    };
+    setCache(cat, items);
+    cats.push(cat);
+  }
+  const byId = Object.fromEntries(cats.map((c) => [c.id, c]));
+  const structure = payload.structure || { groups: [] };
+  const groups = (structure.groups || []).map((g) => ({
+    id: g.id,
+    name: g.name,
+    sections: Array.isArray(g.sections) ? g.sections : undefined,
+    cats: (g.categories || []).filter((c) => byId[c.id] && !used.has(c.id)).map((c) => {
+      used.add(c.id);
+      byId[c.id].name = c.name || byId[c.id].name;
+      byId[c.id].section = c.section || byId[c.id].section || "";
+      return byId[c.id];
+    }),
+  }));
+  const loose = cats.filter((c) => !used.has(c.id));
+  if (loose.length) groups.push({ id: "unsorted", name: "Unsorted", cats: loose });
+  state.cats = groups.flatMap((g) => g.cats);
+  state.groups = groups;
+  rebuildNameIndex();
+  renderMenu();
+}
+
+async function tryBootFromOfflinePack() {
+  try {
+    const rec = await idbGetPack();
+    if (!rec || !rec.payload) return false;
+    await applyPackPayload(rec.payload);
+    await hydrateOfflineImageMap();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function offlinePanelHtml() {
+  return `<section class="install-panel" aria-label="Offline pack">
+    <h2>Offline copy</h2>
+    <p class="muted">Download a <strong>full offline pack</strong>: all lists <em>and</em> item/skill images, compressed into one file. It is saved in this browser’s durable storage <em>and</em> as a file on your device. Clearing “cached images” usually does <strong>not</strong> delete it; clearing <em>all site data</em> does — keep the file to restore.</p>
+    <div class="install-actions">
+      <button type="button" class="btn" id="btn-dl-pack">Download full data pack…</button>
+      <button type="button" class="btn secondary" id="btn-import-pack">Load pack from file…</button>
+      <button type="button" class="btn secondary" id="btn-clear-pack">Remove offline pack</button>
+      <input type="file" id="pack-file" accept=".zip,.gz,.json,application/zip,application/gzip,application/json" hidden>
+    </div>
+    <p class="muted install-hint" id="pack-hint"></p>
+  </section>`;
+}
+
+function wireOfflinePanel() {
+  const hint = (m) => { const el = $("#pack-hint"); if (el) el.textContent = m || ""; };
+  idbGetPack().then((rec) => {
+    if (rec && rec.compressedBytes) {
+      hint(`Offline pack on this device: ${formatBytes(rec.compressedBytes)} · built ${rec.built_at ? new Date(rec.built_at).toLocaleString() : "unknown"}${rec.slim ? " · light (scripts trimmed)" : ""}.`);
+    }
+  }).catch(() => {});
+
+  const btnDl = $("#btn-dl-pack");
+  if (btnDl) {
+    btnDl.onclick = async () => {
+      btnDl.disabled = true;
+      hint("Collecting all categories…");
+      try {
+        const { payload, rawBytes, compressedBlob, compressedBytes, imageNames } = await buildOfflinePack({
+          slim: true,
+          onProgress: (d, total, name) => { hint(`Fetching lists ${d}/${total}: ${name || ""}…`); },
+        });
+        const imgCount = imageNames.size;
+        const ok = confirm(
+          `Download FULL offline pack (data + images)?\n\n` +
+          `Category data (compressed): about ${formatBytes(compressedBytes)}\n` +
+          `Images found: ${imgCount.toLocaleString()} files (size depends on each icon; often tens to a few hundred MB total)\n\n` +
+          `Everything is saved in durable browser storage AND as one .zip file on your device.\n` +
+          `Clearing normal cache usually keeps this; clearing all site data does not — keep the zip.\n\nContinue?`
+        );
+        if (!ok) {
+          hint("Download cancelled.");
+          btnDl.disabled = false;
+          return;
+        }
+        hint(`Downloading ${imgCount} images…`);
+        const imgResult = await downloadAllImages(imageNames, (done, total, okN, failN, bytes) => {
+          hint(`Images ${done}/${total} (saved ${okN}, missing ${failN}) · ${formatBytes(bytes)}…`);
+        });
+        await hydrateOfflineImageMap();
+        hint("Building zip file…");
+        const JSZip = await loadJSZip();
+        const zip = new JSZip();
+        zip.file("data.json", JSON.stringify(payload));
+        const folder = zip.folder("images");
+        for (const name of imageNames) {
+          const blob = await idbGetImage(name);
+          if (blob) folder.file(name, blob);
+        }
+        const zipBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
+        await idbSetPack({
+          payload,
+          compressedBytes: zipBlob.size,
+          rawBytes,
+          imageBytes: imgResult.bytes,
+          imageCount: imgResult.ok,
+          built_at: payload.built_at,
+          slim: true,
+          with_images: true,
+        });
+        const fname = `codex-arcane-offline-${new Date().toISOString().slice(0, 10)}.zip`;
+        downloadBlob(zipBlob, fname);
+        hint(`Done. Pack ${formatBytes(zipBlob.size)} · ${imgResult.ok} images (${formatBytes(imgResult.bytes)}). Keep the zip as backup.`);
+      } catch (err) {
+        hint(`Could not build pack: ${err.message || err}`);
+      }
+      btnDl.disabled = false;
+    };
+  }
+  const btnImp = $("#btn-import-pack");
+  const fileInput = $("#pack-file");
+  if (btnImp && fileInput) {
+    btnImp.onclick = () => fileInput.click();
+    fileInput.onchange = async () => {
+      const file = fileInput.files && fileInput.files[0];
+      fileInput.value = "";
+      if (!file) return;
+      hint("Reading pack file…");
+      try {
+        let payload;
+        if (/\.zip$/i.test(file.name) || file.type.includes("zip")) {
+          const JSZip = await loadJSZip();
+          const zip = await JSZip.loadAsync(file);
+          const dataFile = zip.file("data.json") || zip.file(/data\.json$/i)[0];
+          if (!dataFile) throw new Error("Zip has no data.json");
+          payload = JSON.parse(await dataFile.async("string"));
+          await applyPackPayload(payload);
+          const imgFolder = zip.folder("images");
+          let n = 0;
+          const tasks = [];
+          zip.forEach((path, entry) => {
+            if (entry.dir) return;
+            if (!path.startsWith("images/")) return;
+            const name = path.slice(7);
+            if (!name) return;
+            tasks.push(entry.async("blob").then((blob) => idbPutImage(name, blob).then(() => { n++; })));
+          });
+          await Promise.all(tasks);
+          await hydrateOfflineImageMap();
+          await idbSetPack({
+            payload,
+            compressedBytes: file.size,
+            built_at: payload.built_at || new Date().toISOString(),
+            slim: !!payload.slim,
+            with_images: true,
+            imageCount: n,
+          });
+          renderHome();
+          hint(`Pack loaded with ${n} images (${formatBytes(file.size)}).`);
+        } else {
+          const text = await gunzipToText(file);
+          payload = JSON.parse(text);
+          await applyPackPayload(payload);
+          await idbSetPack({
+            payload,
+            compressedBytes: file.size,
+            rawBytes: text.length,
+            built_at: payload.built_at || new Date().toISOString(),
+            slim: !!payload.slim,
+          });
+          renderHome();
+          hint(`Data pack loaded (${formatBytes(file.size)}). No images in this file.`);
+        }
+      } catch (err) {
+        hint(`Could not load pack: ${err.message || err}`);
+      }
+    };
+  }
+  const btnClr = $("#btn-clear-pack");
+  if (btnClr) {
+    btnClr.onclick = async () => {
+      if (!confirm("Remove the offline pack from this browser? Your downloaded file (if you kept it) is not deleted.")) return;
+      try {
+        await idbClearPack();
+        hint("Offline pack removed from this browser.");
+      } catch (err) {
+        hint(`Could not remove pack: ${err.message || err}`);
+      }
+    };
+  }
+}
+
 // Home page: one card per higher category (like Equipment) with how many items it holds. Pressing one opens the menu on it.
 function renderHome() {
   $("#items").className = "home";
-  $("#items").innerHTML = `<div class="hg-grid">${state.groups.filter((g) => g.cats.length).map((g) => {
+  $("#items").innerHTML = `<div class="home-top">${offlinePanelHtml()}</div>
+    <div class="hg-grid">${state.groups.filter((g) => g.cats.length).map((g) => {
     const n = g.cats.reduce((t, c) => t + c.count, 0);
     const unit = isSectioned(g) ? (n === 1 ? "skill" : "skills") : (n === 1 ? "item" : "items");
     return `<button class="hg-card" type="button" data-g="${esc(g.id)}"><strong>${esc(g.name)}</strong>${isSectioned(g) ? "" : `<span>${n.toLocaleString()} ${unit}</span>`}</button>`;
   }).join("")}</div>`;
+  wireOfflinePanel();
 }
 
 function showHome() {
@@ -1130,6 +1628,8 @@ function skillIconSrc(sk, cat) {
   const file = sk.icon_file || sk.image_file || (sk.icon && !/^https?:\/\//i.test(sk.icon) ? sk.icon : "");
   if (file) {
     const name = String(file).split(/[\\/]/).pop();
+    const local = offlineLocalSrc(name);
+    if (local) return local;
     if (remote && name) return `${CFG.supabaseUrl}/storage/v1/object/public/site/images/${encodeURIComponent(name)}`;
     if (cat?.images && name) return `${cat.images}/${encodeURIComponent(name)}`;
   }
@@ -1137,6 +1637,7 @@ function skillIconSrc(sk, cat) {
   if (sk.icon && /^https?:\/\//i.test(sk.icon)) return sk.icon;
   return "";
 }
+
 
 function skillWeaponIconSrc(fileOrUrl, cat) {
   if (!fileOrUrl) return "";
@@ -1469,15 +1970,17 @@ function recipeSectionHtml(item) {
   return body ? `<h3>Recipe</h3>${body}` : "";
 }
 function resolveAsset(cat, src) {
-  // Absolute URL stays as-is; bare filenames go through the category image folder.
   if (!src) return "";
-  if (/^https?:\/\//i.test(src) || src.startsWith("data:")) return src;
+  if (/^https?:\/\//i.test(src) || src.startsWith("data:") || src.startsWith("blob:")) return src;
   const file = String(src).split(/[\\/]/).pop();
+  const local = offlineLocalSrc(file);
+  if (local) return local;
   if (!file || !cat?.images) return "";
   return remote
     ? `${CFG.supabaseUrl}/storage/v1/object/public/site/images/${encodeURIComponent(file)}`
     : `${cat.images}/${encodeURIComponent(file)}`;
 }
+
 function appearanceSectionHtml(item, cat = catOf(item)) {
   // Prefer item.appearance {male:{normal,light,heavy}, ...} then sections.Appearance.images
   const app = item.appearance;

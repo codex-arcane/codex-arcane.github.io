@@ -1,0 +1,21 @@
+{
+  "version": "2026.10.31",
+  "updated": "2026-10-31",
+  "entries": [
+    {
+      "date": "2026-10-31",
+      "title": "Offline app & bulletin board",
+      "body": "You can install Codex Arcane as an app and optionally save data for offline use. This board lists site changes; use Update when a new version is available."
+    },
+    {
+      "date": "2026-10-29",
+      "title": "Safer links",
+      "body": "Monster, map, and item links only open when that content exists in your downloaded data (correct type)."
+    },
+    {
+      "date": "2026-10-28",
+      "title": "Used For sections",
+      "body": "Upgrade Into / Crafting labels are clearer; linked items stay clickable when present."
+    }
+  ]
+}

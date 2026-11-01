@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Account - Codex Arcane</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;700&family=Cinzel+Decorative:wght@700&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="assets/favicon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="titlebar"><a class="brand" href="index.html" data-go-site id="go-home"><img src="assets/logo.png" alt="Home" width="64" height="58"></a><h1 class="wordmark"><a href="index.html">Codex Arcane</a></h1><span class="page-label">Account</span></div>
+  <nav id="tabs" aria-label="Account mode">
+    <button id="t-in" aria-current="true">Sign in</button>
+    <button id="t-up">Create account</button>
+  </nav>
+</header>
+
+<main class="admin">
+  <form id="form" autocomplete="on">
+    <label for="user">Username</label>
+    <input id="user" name="username" autocomplete="username" required minlength="3" maxlength="20" pattern="[A-Za-z0-9_]{3,20}">
+    <p id="hint" class="muted">Letters, numbers and underscores, 3 to 20 characters.</p>
+
+    <label for="pass">Password</label>
+    <div class="pw"><input id="pass" name="password" type="password" autocomplete="current-password" required minlength="8"></div>
+
+    <div id="confirm-wrap" hidden>
+      <label for="pass2">Repeat password</label>
+      <div class="pw"><input id="pass2" type="password" autocomplete="new-password" minlength="8"></div>
+    </div>
+
+    <button id="submit" class="primary">Sign in</button>
+    <p id="msg" class="muted" role="status"></p>
+    <p id="forgot" class="muted">Forgot your password? Accounts here don't use a real email, so the site owner has to reset it for you.</p>
+  </form>
+
+  <section id="done" hidden>
+    <p id="who"></p>
+    <p><a id="adminlink" href="admin.html" hidden>Open owner panel</a></p>
+    <p class="account-actions">
+      <button type="button" id="signout">Sign out</button>
+      <a href="index.html" class="btn" data-go-site>View site</a>
+    </p>
+    <p class="muted">To use a different account, press <strong>Sign out</strong> first, then sign in again.</p>
+
+    <form id="pwform" class="pw-form" autocomplete="off">
+      <h2>Change password</h2>
+      <label for="np">New password</label>
+      <div class="pw"><input id="np" type="password" autocomplete="new-password" required minlength="8"></div>
+      <label for="np2">Repeat new password</label>
+      <div class="pw"><input id="np2" type="password" autocomplete="new-password" required minlength="8"></div>
+      <button class="primary">Change password</button>
+      <p id="pwmsg" class="muted" role="status"></p>
+    </form>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="account.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>

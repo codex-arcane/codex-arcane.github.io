@@ -191,7 +191,6 @@ async function boot() {
   // Restore offline images if a previous full pack is in IndexedDB
   hydrateOfflineImageMap().catch(() => {});
   ensurePackSizeKnown().catch(() => {});
-  setTimeout(() => openInstallPopup(), 1200);
   renderMenu();
   addEventListener("hashchange", route);
   route();
@@ -268,11 +267,12 @@ function renderMenu() {
   }).join("");
   const app = `<div class="dg dg-app">
       <p class="dg-app-label">App</p>
-      <button type="button" class="dg-app-btn" data-app="download">Download offline app</button>
-      <button type="button" class="dg-app-btn" data-app="updates">Check for updates</button>
+      <button type="button" class="dg-app-btn" id="menu-app-main" data-app="install-app">Install app</button>
+      <p class="dg-app-sub muted" id="menu-app-sub"></p>
       <p class="dg-app-hint muted" id="menu-app-hint"></p>
     </div>`;
   $("#menu-list").innerHTML = top + groups + app;
+  refreshMenuAppButton();
 }
 
 function openMenu() {
@@ -301,8 +301,8 @@ $("#menu-list").onclick = (e) => {
   const appBtn = e.target.closest("[data-app]");
   if (appBtn) {
     const action = appBtn.dataset.app;
-    if (action === "download") startOfflinePackDownload();
-    else if (action === "updates") checkForAppUpdates();
+    if (action === "install-app") offerPwaInstall(menuAppHint, true);
+    else if (action === "install-offline" || action === "install-latest") startOfflinePackDownload();
     return;
   }
   const nav = e.target.closest("[data-nav]");
@@ -371,66 +371,11 @@ addEventListener("beforeinstallprompt", (e) => {
   const b = document.getElementById("btn-install-pwa");
   if (b) b.hidden = false;
 });
-addEventListener("appinstalled", () => { deferredInstall = null; });
-const INSTALL_DISMISS_KEY = "codex_install_popup_dismissed";
-
-function ensureInstallPopup() {
-  let dlg = document.getElementById("install-popup");
-  if (dlg) return dlg;
-  dlg = document.createElement("dialog");
-  dlg.id = "install-popup";
-  dlg.innerHTML = `
-    <h2>Get the app</h2>
-    <p class="ip-body">Install Codex Arcane on your home screen for quick access. You can also save offline data in one step.</p>
-    <div class="ip-actions">
-      <button type="button" class="ip-primary" id="ip-install">Install app</button>
-      <button type="button" class="ip-secondary" id="ip-offline">Download offline app</button>
-      <button type="button" class="ip-dismiss" id="ip-dismiss">Not now</button>
-    </div>
-    <p class="ip-status" id="ip-status"></p>`;
-  document.body.appendChild(dlg);
-  const status = () => document.getElementById("ip-status");
-  const setSt = (m) => { const el = status(); if (el) el.textContent = m || ""; };
-  document.getElementById("ip-install").onclick = async () => {
-    setSt("Opening install…");
-    await offerPwaInstall((m) => setSt(m), true);
-  };
-  document.getElementById("ip-offline").onclick = async () => {
-    try { dlg.close(); } catch {}
-    await startOfflinePackDownload();
-  };
-  document.getElementById("ip-dismiss").onclick = () => {
-    try { localStorage.setItem(INSTALL_DISMISS_KEY, "1"); } catch {}
-    try { dlg.close(); } catch {}
-  };
-  dlg.addEventListener("cancel", () => {
-    try { localStorage.setItem(INSTALL_DISMISS_KEY, "1"); } catch {}
-  });
-  return dlg;
-}
-
-function shouldShowInstallPopup() {
-  const standalone = window.matchMedia("(display-mode: standalone)").matches
-    || window.navigator.standalone === true;
-  if (standalone) return false;
-  try { if (localStorage.getItem(INSTALL_DISMISS_KEY) === "1") return false; } catch {}
-  return true;
-}
-
-function openInstallPopup() {
-  if (!shouldShowInstallPopup()) return;
-  const dlg = ensureInstallPopup();
-  if (typeof dlg.showModal === "function") {
-    if (!dlg.open) dlg.showModal();
-  } else {
-    dlg.setAttribute("open", "");
-  }
-}
-
-// When Chrome is ready to install, show the centered popup (once per visit unless dismissed)
-addEventListener("beforeinstallprompt", () => {
-  setTimeout(() => openInstallPopup(), 600);
+addEventListener("appinstalled", () => {
+  deferredInstall = null;
+  refreshMenuAppButton().catch(() => {});
 });
+
 
 
 // Cache API is easy to wipe with "clear cache". IndexedDB survives most cache-only clears.
@@ -833,9 +778,98 @@ async function ensurePackSizeKnown(onDone) {
   }
 }
 
+
+function isStandaloneApp() {
+  return window.matchMedia("(display-mode: standalone)").matches
+    || window.navigator.standalone === true;
+}
+
+async function hasOfflinePackOnDevice() {
+  try {
+    const rec = await idbGetPack();
+    if (rec && rec.payload) return true;
+  } catch {}
+  return !!installedVersion();
+}
+
+/**
+ * Browser tab → Install app
+ * Installed app, no offline data → Install offline version
+ * Installed app, older offline data (online) → Install latest version
+ */
+async function resolveAppButton() {
+  if (!isStandaloneApp()) {
+    return {
+      action: "install-app",
+      label: "Install app",
+      sub: "Adds Codex Arcane to your home screen (Chrome install notice).",
+    };
+  }
+  const hasPack = await hasOfflinePackOnDevice();
+  let remoteVer = null;
+  if (navigator.onLine) {
+    try {
+      const meta = await fetchAppMeta();
+      remoteVer = meta && meta.version ? String(meta.version) : null;
+    } catch {}
+  }
+  const local = installedVersion();
+  if (hasPack && remoteVer && local && remoteVer !== local) {
+    return {
+      action: "install-latest",
+      label: "Install latest version",
+      sub: `Update offline data (${local} → ${remoteVer}). Needs internet once.`,
+    };
+  }
+  if (hasPack && remoteVer && !local) {
+    return {
+      action: "install-latest",
+      label: "Install latest version",
+      sub: `Save offline data for version ${remoteVer}. Needs internet once.`,
+    };
+  }
+  if (hasPack && remoteVer && local && remoteVer === local) {
+    return {
+      action: "install-offline",
+      label: "Install offline version",
+      sub: `Offline data is up to date (v${local}). Press to download again.`,
+    };
+  }
+  if (hasPack && !navigator.onLine) {
+    return {
+      action: "install-offline",
+      label: "Install offline version",
+      sub: "You are offline. Connect to the internet to check for a newer version.",
+    };
+  }
+  return {
+    action: "install-offline",
+    label: "Install offline version",
+    sub: "Saves lists and images so this app works without internet. No file in Downloads.",
+  };
+}
+
+async function refreshMenuAppButton() {
+  const btn = document.getElementById("menu-app-main");
+  const sub = document.getElementById("menu-app-sub");
+  if (!btn) return;
+  btn.disabled = true;
+  try {
+    const info = await resolveAppButton();
+    btn.dataset.app = info.action;
+    btn.textContent = info.label;
+    btn.disabled = false;
+    if (sub) sub.textContent = info.sub || "";
+  } catch {
+    btn.disabled = false;
+    btn.dataset.app = isStandaloneApp() ? "install-offline" : "install-app";
+    btn.textContent = isStandaloneApp() ? "Install offline version" : "Install app";
+    if (sub) sub.textContent = "";
+  }
+}
+
 function showInstallNowButton(hintFn) {
   const hint = typeof hintFn === "function" ? hintFn : menuAppHint;
-  try { openInstallPopup(); } catch {}
   const host = document.getElementById("menu-app-hint");
   if (!host) {
     hint("Offline data ready. Use the Install app button in the popup.");
@@ -862,45 +896,34 @@ function showInstallNowButton(hintFn) {
 /** @param fromUserClick true when called from Install app now (keeps Chrome gesture). */
 async function offerPwaInstall(hintFn, fromUserClick) {
   const hint = typeof hintFn === "function" ? hintFn : menuAppHint;
-  const standalone = window.matchMedia("(display-mode: standalone)").matches
-    || window.navigator.standalone === true;
-  if (standalone) {
-    hint("Already running as an installed app. Offline data is ready.");
+  if (isStandaloneApp()) {
+    hint("You are already using the installed app. Use “Install offline version” to save data.");
+    await refreshMenuAppButton();
     return;
   }
-
   if (deferredInstall) {
     try {
       deferredInstall.prompt();
       const choice = await deferredInstall.userChoice;
       if (choice.outcome === "accepted") {
         deferredInstall = null;
-        hint("Installing… Look for Codex Arcane on your home screen or app list.");
+        hint("Installing… Open Codex Arcane from your home screen when it appears.");
       } else {
-        hint("Install cancelled. Offline data is still saved. Tap Install app now again when you want the icon.");
-        if (!fromUserClick) showInstallNowButton(hintFn);
+        hint("Install cancelled. You can press Install app again anytime.");
       }
       return;
     } catch (err) {
       console.warn("install prompt", err);
     }
   }
-
-  // No deferred prompt yet, or prompt failed after long download (Chrome drops the gesture).
-  if (!fromUserClick) {
-    showInstallNowButton(hintFn);
-    return;
-  }
-
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
   if (isIOS) {
-    hint("Tap Share → Add to Home Screen. (iPhone never allows auto-install.)");
-  } else if (!deferredInstall) {
-    hint("Chrome has not offered install yet. Use ⋮ → Install app. Visit the site once more, then try Install app now.");
+    hint("iPhone/iPad: tap Share → Add to Home Screen.");
   } else {
-    hint("Could not open install dialog. Use ⋮ → Install app.");
+    hint("Chrome did not show a popup. Use the browser menu ⋮ → Install app / Install page as app.");
   }
 }
+
 
 
 
@@ -1234,72 +1257,66 @@ async function checkForAppUpdates() {
 
 async function startOfflinePackDownload() {
   const hint = menuAppHint;
+  if (!navigator.onLine) {
+    hint("You need an internet connection to install or update offline data.");
+    return;
+  }
   try {
-    hint("Checking…");
+    hint("Checking published pack…");
     const meta = await fetchAppMeta();
-    let total = meta.total_bytes || readCachedPackBytes();
-    const verLine = meta.version ? ("Version " + meta.version + "\n") : "";
-    const fastNote = "\nUses a single pack file from the server when available (much faster).";
+    const total = meta.total_bytes || readCachedPackBytes();
+    const ver = meta.version ? `Version ${meta.version}. ` : "";
+    const size = total ? `About ${formatBytes(total)}. ` : "";
     const ok = confirm(
-      "Download offline app?\n\n" +
-      verLine +
-      (total ? ("About " + formatBytes(total) + " of storage on this device.\n") : "") +
-      "Saves data inside the app (no file in Downloads), then offers Install to your home screen.\n" +
-      fastNote +
-      "\n\nContinue?"
+      `Install offline data on this device?\n\n${ver}${size}` +
+      `Data is saved inside the app (not as a file in Downloads).\n\nContinue?`
     );
-    if (!ok) { hint("Download cancelled."); return; }
-    // FAST PATH: one published zip
-    const fast = await tryDownloadPublishedZip(meta, hint);
-    if (fast) {
-      // Long download clears Chrome's "user gesture", so auto-prompt often fails.
-      // Try once, then show Install app now (one tap — same as the old separate button).
-      await offerPwaInstall(hint, false);
+    if (!ok) {
+      hint("Cancelled.");
       return;
     }
-    hint("No published pack zip yet — falling back to multi-file download (slower)…");
-    hint("Downloading data…");
-
+    hint("Downloading offline data…");
+    const fast = await tryDownloadPublishedZip(meta, hint);
+    if (fast) {
+      if (meta.version) setInstalledVersion(meta.version);
+      hint(`Done. Offline data saved${meta.version ? ` (v${meta.version})` : ""}.`);
+      await refreshMenuAppButton();
+      return;
+    }
+    hint("No published pack zip — downloading files one by one (slower)…");
     const built = await buildOfflinePack({
       slim: true,
-      onProgress: function (d, totalN, name) { hint("Lists " + d + "/" + totalN + ": " + (name || "") + "…"); },
+      onProgress: function (d, totalN, name) {
+        hint("Lists " + d + "/" + totalN + ": " + (name || "") + "…");
+      },
     });
-    const payload = built.payload, rawBytes = built.rawBytes, imageNames = built.imageNames;
+    const payload = built.payload, imageNames = built.imageNames;
     hint("Downloading images…");
-    const imgResult = await downloadAllImages(imageNames, function (done, totalN, okN, failN, bytes, skipped) {
+    const imgResult = await downloadAllImages(imageNames, function (done, totalN, okN, failN, bytes) {
       hint("Images " + done + "/" + totalN + " (saved " + okN + ", missing " + failN + ") · " + formatBytes(bytes) + "…");
     });
-    await hydrateOfflineImageMap();
-    hint("Building zip…");
-    const JSZip = await loadJSZip();
-    const zip = new JSZip();
-    zip.file("data.json", JSON.stringify(payload));
-    const folder = zip.folder("images");
-    for (const name of imageNames) {
-      const blob = await idbGetImage(name);
-      if (blob) folder.file(name, blob);
-    }
-    const zipBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
     await idbSetPack({
       payload: payload,
-      compressedBytes: zipBlob.size,
-      rawBytes: rawBytes,
-      imageBytes: imgResult.bytes,
+      compressedBytes: 0,
       imageCount: imgResult.ok,
       built_at: payload.built_at,
-      slim: true,
       with_images: true,
       version: meta.version || null,
     });
-    if (zipBlob.size > 0) writeCachedPackBytes(zipBlob.size);
+    await hydrateOfflineImageMap();
     if (meta.version) setInstalledVersion(meta.version);
-    const miss = (imgResult.failed && imgResult.failed.length) ? (" Missing " + imgResult.failed.length + " images.") : "";
-    hint("Done · " + formatBytes(zipBlob.size) + " · " + imgResult.ok + " images saved on this device." + miss);
-    if (typeof offerPwaInstall === "function") await offerPwaInstall(hint, false);
+    const miss = (imgResult.failed && imgResult.failed.length)
+      ? ` Missing ${imgResult.failed.length} images.`
+      : "";
+    hint(`Done. Offline data saved.${miss}`);
+    await refreshMenuAppButton();
   } catch (err) {
-    hint("Download failed: " + (err.message || err));
+    hint("Failed: " + (err.message || err));
   }
 }
+
+
+
 
 function offlinePanelHtml() {
   return `<section class="install-panel" aria-label="Offline pack">

@@ -798,64 +798,9 @@ dialog .sk-page { margin: -.25rem 0; }
 .dg-app-btn:hover { background: rgba(122, 74, 20, .12); }
 .dg-app-hint { margin: .45rem 0 0; font-size: .8rem; line-height: 1.35; min-height: 1.2em; }
 
-/* Centered install app popup */
-#install-popup {
-  width: min(22rem, 92vw);
-  padding: 1.35rem 1.4rem 1.2rem;
-  border: 1px solid var(--edge);
-  border-radius: 14px;
-  background: var(--panel);
-  color: var(--text);
-  box-shadow: 0 12px 40px rgba(53, 33, 14, .25);
-}
-#install-popup::backdrop { background: rgba(53, 33, 14, .55); }
-#install-popup h2 {
-  margin: 0 0 .4rem;
-  font-family: var(--display);
-  font-size: 1.25rem;
-  text-align: center;
-}
-#install-popup .ip-body {
-  margin: 0 0 1rem;
-  font-size: .92rem;
-  line-height: 1.45;
-  color: var(--muted);
-  text-align: center;
-}
-#install-popup .ip-actions {
-  display: flex;
-  flex-direction: column;
-  gap: .5rem;
-}
-#install-popup .ip-actions button {
-  width: 100%;
-  padding: .65rem 1rem;
-  border-radius: 10px;
-  border: 1px solid var(--edge);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-#install-popup .ip-primary {
-  background: var(--accent, #7a4a14);
-  color: #fff;
-  border-color: transparent;
-}
-#install-popup .ip-secondary {
-  background: rgba(122, 74, 20, .08);
-  color: var(--text);
-}
-#install-popup .ip-dismiss {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-weight: 500;
-  padding: .4rem;
-}
-#install-popup .ip-status {
-  margin: .65rem 0 0;
-  min-height: 1.2em;
-  font-size: .82rem;
-  text-align: center;
-  color: var(--muted);
+
+.dg-app-sub {
+  margin: 0.25rem 0 0.15rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
 }

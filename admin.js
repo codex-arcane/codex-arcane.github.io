@@ -152,9 +152,6 @@ async function codexPublishVersion() {
       missing: codexLastMeasure ? codexLastMeasure.missing : null,
       updated_at: new Date().toISOString(),
     };
-    // keep the uploaded pack file(s): publishing a new version number must not forget where the pack is
-    if (prev && prev.pack_url) body.pack_url = prev.pack_url;
-    if (prev && Array.isArray(prev.pack_parts) && prev.pack_parts.length) body.pack_parts = prev.pack_parts;
     // Prefer signed-in client if start() created one
     let token = cfg.supabaseAnonKey;
     try {
@@ -208,10 +205,6 @@ function codexDownloadBlob(blob, filename) {
 }
 
 /** Owner-only: build full pack zip and save to this computer's Downloads. */
-// Supabase's free plan refuses a single file over 50 MB. Stay safely below it.
-const CODEX_PACK_SINGLE_LIMIT = 45 * 1048576;   // bigger than this → split into parts
-const CODEX_PACK_PART_BUDGET = 38 * 1048576;    // size of the images in one part
-
 async function codexBuildDownloadPackZip() {
   if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
     codexMeasureOut("Missing Supabase config");
@@ -346,6 +339,94 @@ document.addEventListener("click", (e) => {
   }
 });
 
+async function codexLoadTus() {
+  if (window.tus) return window.tus;
+  await new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/tus-js-client@4.1.0/dist/tus.min.js";
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("Could not load tus upload library"));
+    document.head.append(s);
+  });
+  return window.tus;
+}
+
+async function codexOwnerToken() {
+  let token = cfg.supabaseAnonKey;
+  try {
+    if (window.__codexSb) {
+      const session = (await window.__codexSb.auth.getSession()).data.session;
+      if (session) token = session.access_token;
+    }
+  } catch {}
+  return token;
+}
+
+async function codexAfterPackUploaded(fileSize) {
+  const token = await codexOwnerToken();
+  const base = cfg.supabaseUrl.replace(/\/+$/, "");
+  const prev = (await codexLoadPublishedMeta()) || {};
+  const body = {
+    ...prev,
+    version: prev.version || codexNextVersion(null),
+    total_bytes: fileSize,
+    pack_url: `${base}/storage/v1/object/public/site/pack/offline-full.zip`,
+    updated_at: new Date().toISOString(),
+  };
+  const up2 = await fetch(`${base}/storage/v1/object/site/config/app-version.json`, {
+    method: "POST",
+    headers: {
+      apikey: cfg.supabaseAnonKey,
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "x-upsert": "true",
+    },
+    body: JSON.stringify(body, null, 2),
+  });
+  if (!up2.ok) throw new Error(await up2.text());
+  codexMeasureOut(
+    `Pack zip uploaded (${(fileSize / 1048576).toFixed(1)} MB). Users can Download offline pack as one fast file. Version ${body.version}.`
+  );
+  await codexRefreshPubVer();
+}
+
+/** Large zips: resumable (chunked) upload — avoids Supabase 413 Payload too large. */
+async function codexUploadPackZipResumable(file) {
+  const tus = await codexLoadTus();
+  const token = await codexOwnerToken();
+  const endpoint = `${cfg.supabaseUrl.replace(/\/+$/, "")}/storage/v1/upload/resumable`;
+  return new Promise((resolve, reject) => {
+    const upload = new tus.Upload(file, {
+      endpoint,
+      retryDelays: [0, 1000, 3000, 5000, 10000],
+      headers: {
+        authorization: `Bearer ${token}`,
+        apikey: cfg.supabaseAnonKey,
+        "x-upsert": "true",
+      },
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      chunkSize: 6 * 1024 * 1024,
+      metadata: {
+        bucketName: "site",
+        objectName: "pack/offline-full.zip",
+        contentType: "application/zip",
+        cacheControl: "3600",
+      },
+      onError: (err) => reject(err),
+      onProgress: (sent, total) => {
+        const pct = total ? Math.round((sent / total) * 100) : 0;
+        codexMeasureOut(`Uploading pack zip… ${pct}% (${(sent / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB)`);
+      },
+      onSuccess: () => resolve(),
+    });
+    upload.findPreviousUploads().then((prev) => {
+      if (prev.length) upload.resumeFromPreviousUpload(prev[0]);
+      upload.start();
+    }).catch(() => upload.start());
+  });
+}
+
 document.addEventListener("change", async (e) => {
   if (e.target.id !== "pack-zip-file") return;
   const file = e.target.files && e.target.files[0];
@@ -353,102 +434,37 @@ document.addEventListener("change", async (e) => {
   if (!file) return;
   codexMeasureOut("Uploading pack zip (" + file.name + ", " + (file.size / 1048576).toFixed(1) + " MB)…");
   try {
-    let token = cfg.supabaseAnonKey;
-    try {
-      if (window.__codexSb) {
-        const session = (await window.__codexSb.auth.getSession()).data.session;
-        if (session) token = session.access_token;
-      }
-    } catch {}
-    const root = cfg.supabaseUrl.replace(/\/+$/, "");
-    const publicUrl = (path) => `${root}/storage/v1/object/public/site/${path}`;
-    const putFile = async (path, blob, type) => {
-      const r = await fetch(`${root}/storage/v1/object/site/${path}`, {
-        method: "POST",
-        headers: { apikey: cfg.supabaseAnonKey, Authorization: `Bearer ${token}`, "Content-Type": type, "x-upsert": "true" },
-        body: blob,
-      });
-      if (!r.ok) throw new Error(await r.text());
-    };
-    const delFile = async (path) => {                       // best effort: remove files that are no longer used
-      try {
-        await fetch(`${root}/storage/v1/object/site/${path}`, { method: "DELETE", headers: { apikey: cfg.supabaseAnonKey, Authorization: `Bearer ${token}` } });
-      } catch {}
-    };
-    const prev = (await codexLoadPublishedMeta()) || {};
-    let parts = null, total = file.size;
-    if (file.size <= CODEX_PACK_SINGLE_LIMIT) {
-      await putFile("pack/offline-full.zip", file, "application/zip");
+    // Always use resumable upload for packs over ~15 MB (simple POST hits 413)
+    if (file.size > 15 * 1024 * 1024) {
+      await codexUploadPackZipResumable(file);
     } else {
-      // The free plan refuses any single file over 50 MB. Cut the pack into parts (each well under that) and
-      // upload them one by one; the app downloads and installs all parts in order.
-      codexMeasureOut(`The pack is ${(file.size / 1048576).toFixed(1)} MB, more than one file may be (50 MB). Splitting it into parts…`);
-      const JSZip = await codexLoadJSZip();
-      const src = await JSZip.loadAsync(file);
-      const dataEntry = src.file("data.json");
-      if (!dataEntry) throw new Error("This zip has no data.json. Build it with 'Build pack zip' first.");
-      parts = [];
-      total = 0;
-      const send = async (zip, compression) => {
-        const n = parts.length + 1;
-        const blob = await zip.generateAsync({ type: "blob", compression });
-        if (blob.size > CODEX_PACK_SINGLE_LIMIT + 4 * 1048576) throw new Error(`Part ${n} is ${(blob.size / 1048576).toFixed(1)} MB; it cannot be split further.`);
-        codexMeasureOut(`Uploading part ${n} (${(blob.size / 1048576).toFixed(1)} MB)…`);
-        await putFile(`pack/offline-part-${n}.zip`, blob, "application/zip");
-        parts.push(publicUrl(`pack/offline-part-${n}.zip`));
-        total += blob.size;
-      };
-      // part 1: the lists (data.json). Parts 2…: the images, packed up to the size limit each.
-      const first = new JSZip();
-      first.file("data.json", await dataEntry.async("blob"), { compression: "DEFLATE" });
-      await send(first, "DEFLATE");
-      const imgs = [];
-      src.forEach((path, entry) => { if (!entry.dir && path.startsWith("images/")) imgs.push([path, entry]); });
-      let cur = new JSZip(), curSize = 0, curCount = 0;
-      for (let i = 0; i < imgs.length; i++) {
-        const [path, entry] = imgs[i];
-        const blob = await entry.async("blob");
-        if (curCount && curSize + blob.size > CODEX_PACK_PART_BUDGET) {
-          await send(cur, "STORE");
-          cur = new JSZip(); curSize = 0; curCount = 0;
-        }
-        cur.file(path, blob, { compression: "STORE" });
-        curSize += blob.size; curCount++;
-        if (i % 50 === 0) codexMeasureOut(`Preparing images ${i + 1}/${imgs.length}…`);
+      const token = await codexOwnerToken();
+      const path = "pack/offline-full.zip";
+      const up = await fetch(`${cfg.supabaseUrl.replace(/\/+$/, "")}/storage/v1/object/site/${path}`, {
+        method: "POST",
+        headers: {
+          apikey: cfg.supabaseAnonKey,
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/zip",
+          "x-upsert": "true",
+        },
+        body: file,
+      });
+      if (!up.ok) {
+        // fallback to resumable if server still rejects
+        if (up.status === 413) await codexUploadPackZipResumable(file);
+        else throw new Error(await up.text());
       }
-      if (curCount) await send(cur, "STORE");
-      await delFile("pack/offline-full.zip");                // the old single file is replaced by the parts
     }
-    // remove leftover parts from an earlier upload that had more parts
-    const keep = new Set(parts || []);
-    for (const u of Array.isArray(prev.pack_parts) ? prev.pack_parts : []) {
-      if (!keep.has(u)) { const m = String(u).match(/\/public\/site\/(pack\/.+)$/); if (m) await delFile(m[1]); }
-    }
-    const body = {
-      ...prev,
-      version: prev.version || codexNextVersion(null),
-      total_bytes: total,
-      pack_url: parts ? parts[0] : publicUrl("pack/offline-full.zip"),
-      updated_at: new Date().toISOString(),
-    };
-    if (parts) body.pack_parts = parts; else delete body.pack_parts;
-    const up2 = await fetch(`${root}/storage/v1/object/site/config/app-version.json`, {
-      method: "POST",
-      headers: {
-        apikey: cfg.supabaseAnonKey,
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "x-upsert": "true",
-      },
-      body: JSON.stringify(body, null, 2),
-    });
-    if (!up2.ok) throw new Error(await up2.text());
-    codexMeasureOut(`Pack uploaded (${(total / 1048576).toFixed(1)} MB${parts ? `, in ${parts.length} parts` : ""}). Users can Download offline pack as one fast action. Version ${body.version}.`);
-    await codexRefreshPubVer();
+    await codexAfterPackUploaded(file.size);
   } catch (err) {
     console.error(err);
-    codexMeasureOut("Zip upload failed: " + (err.message || err));
-    alert("Zip upload failed: " + (err.message || err));
+    const msg = String(err.message || err);
+    codexMeasureOut("Zip upload failed: " + msg);
+    alert(
+      "Zip upload failed: " + msg +
+      "\n\nAlso check Supabase → Project Settings → Storage → raise “Maximum file size” (e.g. 500 MB or 1 GB)."
+    );
   }
 });
 document.addEventListener("DOMContentLoaded", () => { codexRefreshPubVer(); });

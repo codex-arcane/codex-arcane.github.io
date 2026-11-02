@@ -102,15 +102,20 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 
 // Icon paths may be Windows-style, so only the file name is used.
 function imgSrc(cat, item) {
-  const file = (item.image_file || item.image_url || "").split(/[\\/]/).pop();
+  if (!item) return "";
+  const raw = item.image_file || item.icon_file || item.image_url || item.icon || "";
+  const file = String(raw).split(/[\\/]/).pop().split("?")[0];
   if (!file) return "";
-  const local = offlineLocalSrc(file);
+  const local = offlineLocalSrc(file) || offlineLocalSrc(decodeURIComponent(file));
   if (local) return local;
-  if (!cat.images && !remote) return "";
+  // Offline: do not use network URLs (they fail and show broken icons)
+  if (!navigator.onLine) return "";
+  if (!cat?.images && !remote) return "";
   return remote
     ? `${CFG.supabaseUrl}/storage/v1/object/public/site/images/${encodeURIComponent(file)}`
     : `${cat.images}/${encodeURIComponent(file)}`;
 }
+
 
 
 // Categories uploaded from the owner panel: one data/<category>.json file each in Supabase Storage.
@@ -159,22 +164,30 @@ function empty(msg) {
 }
 
 async function boot() {
-  try {
-    if (remote) {
-      Object.assign(state, await loadRemote());
-    } else {
-      const res = await fetch("data/manifest.json");
-      if (!res.ok) throw new Error(res.status);
-      state.cats = (await res.json()).categories;
-      state.groups = [{ id: "all", name: "All", cats: state.cats }];
-    }
-  } catch (err) {
-    // Network/Supabase failed: use durable offline pack if the user downloaded one
-    const ok = await tryBootFromOfflinePack();
-    if (!ok) {
-      return empty(remote
-        ? "Couldn't load categories. Check config.js, or use Offline copy → Load pack from file."
-        : "Couldn't load data/manifest.json. Run scripts/build_manifest.py, or load an offline pack.");
+  let loaded = false;
+  // Offline or no network: use the installed offline pack first (complete groups + local icons)
+  if (!navigator.onLine) {
+    loaded = await tryBootFromOfflinePack();
+  }
+  if (!loaded) {
+    try {
+      if (remote) {
+        Object.assign(state, await loadRemote());
+        loaded = true;
+      } else {
+        const res = await fetch("data/manifest.json");
+        if (!res.ok) throw new Error(res.status);
+        state.cats = (await res.json()).categories;
+        state.groups = [{ id: "all", name: "All", cats: state.cats }];
+        loaded = true;
+      }
+    } catch (err) {
+      loaded = await tryBootFromOfflinePack();
+      if (!loaded) {
+        return empty(remote
+          ? "Couldn't load categories. Go online once, or install offline data from the menu."
+          : "Couldn't load data. Install offline data from the menu when online.");
+      }
     }
   }
   if (!state.cats.length) return empty(remote
@@ -486,9 +499,15 @@ async function hydrateOfflineImageMap() {
   }
   offlineImgMap.clear();
   const keys = await idbImageKeys();
-  for (const name of keys) {
-    const blob = await idbGetImage(name);
-    if (blob) offlineImgMap.set(String(name), URL.createObjectURL(blob));
+  const batch = 100;
+  for (let i = 0; i < keys.length; i += batch) {
+    const slice = keys.slice(i, i + batch);
+    await Promise.all(slice.map(async (name) => {
+      try {
+        const blob = await idbGetImage(name);
+        if (blob && blob.size > 0) offlineImgMap.set(String(name), URL.createObjectURL(blob));
+      } catch {}
+    }));
   }
   offlineImagesReady = offlineImgMap.size > 0;
 }
@@ -1044,7 +1063,7 @@ async function applyPackPayload(payload) {
       id,
       name: block.name || id,
       section: block.section || "",
-      count: items.length,
+      count: countOf(items),
       files: [],
       images: true,
       offline: true,
@@ -1052,21 +1071,26 @@ async function applyPackPayload(payload) {
     setCache(cat, items);
     cats.push(cat);
   }
+  if (!cats.length) throw new Error("Pack has no categories");
   const byId = Object.fromEntries(cats.map((c) => [c.id, c]));
-  const structure = payload.structure || { groups: [] };
-  const groups = (structure.groups || []).map((g) => ({
-    id: g.id,
-    name: g.name,
+  let structure = payload.structure || { groups: [] };
+  let groups = (structure.groups || []).map((g) => ({
+    id: g.id || "group",
+    name: g.name || g.id || "Group",
     sections: Array.isArray(g.sections) ? g.sections : undefined,
-    cats: (g.categories || []).filter((c) => byId[c.id] && !used.has(c.id)).map((c) => {
+    cats: (g.categories || []).filter((c) => c && byId[c.id] && !used.has(c.id)).map((c) => {
       used.add(c.id);
       byId[c.id].name = c.name || byId[c.id].name;
       byId[c.id].section = c.section || byId[c.id].section || "";
       return byId[c.id];
     }),
-  }));
+  })).filter((g) => g.cats.length);
   const loose = cats.filter((c) => !used.has(c.id));
   if (loose.length) groups.push({ id: "unsorted", name: "Unsorted", cats: loose });
+  // If structure was missing/empty, still show everything
+  if (!groups.length) {
+    groups = [{ id: "all", name: "All", cats }];
+  }
   state.cats = groups.flatMap((g) => g.cats);
   state.groups = groups;
   rebuildNameIndex();
@@ -1217,7 +1241,13 @@ async function tryDownloadPublishedZip(meta, hint) {
   hydrateOfflineImageMap().catch(() => {});
   if (bytes > 0) writeCachedPackBytes(bytes);
   if (meta.version) setInstalledVersion(meta.version);
-  hint(`Done · ${formatBytes(bytes)} · ${n} images on this device. Version ${meta.version || "—"}.`);
+  const catN = payload.categories ? payload.categories.length : 0;
+  const hasStruct = !!(payload.structure && payload.structure.groups && payload.structure.groups.length);
+  hint(
+    `Done · ${formatBytes(bytes)} · ${catN} categories · ${n} images` +
+    (hasStruct ? "" : " · warning: pack menu layout missing") +
+    ` · v${meta.version || "—"}`
+  );
   return true;
 }
 

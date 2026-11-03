@@ -212,9 +212,7 @@ async function codexBuildDownloadPackZip() {
   }
   const btn = document.getElementById("btn-build-pack-zip");
   if (btn) btn.disabled = true;
-  // Stay under common 25 MB release limits (leave headroom for zip overhead)
-  const PART_MAX = 24 * 1024 * 1024;
-  codexMeasureOut("Building pack (will auto-split under 25 MB for GitHub Releases)… lists first.");
+  codexMeasureOut("Building pack zip for you (owner)… lists first.");
   try {
     const base = `${cfg.supabaseUrl.replace(/\/+$/, "")}/storage/v1/object/public/site`;
     let files = [];
@@ -281,11 +279,12 @@ async function codexBuildDownloadPackZip() {
       structure,
       categories,
     };
-    const dataJson = JSON.stringify(payload);
 
     const JSZip = await codexLoadJSZip();
+    const zip = new JSZip();
+    zip.file("data.json", JSON.stringify(payload));
+    const folder = zip.folder("images");
     const arr = [...imageNames];
-    const imageBlobs = []; // { name, blob, size }
     let ok = 0, miss = 0;
     let i = 0;
     const concurrency = 16;
@@ -297,97 +296,26 @@ async function codexBuildDownloadPackZip() {
           const r = await fetch(`${base}/images/${encodeURIComponent(name)}`, { cache: "no-cache" });
           if (!r.ok) { miss++; continue; }
           const blob = await r.blob();
-          if (blob && blob.size > 0) {
-            imageBlobs.push({ name, blob, size: blob.size });
-            ok++;
-          } else miss++;
+          folder.file(name, blob);
+          ok++;
         } catch { miss++; }
         if (idx % 20 === 0) codexMeasureOut(`Images ${idx + 1}/${arr.length} (saved ${ok}, missing ${miss})…`);
       }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(arr.length, 1)) }, () => worker()));
-
-    // Split into parts ≤ PART_MAX (estimated with ~0.92 compression factor, then verify)
-    codexMeasureOut("Splitting into GitHub-sized parts (≤25 MB each)…");
-    const batches = []; // each: array of {name, blob}
-    let batch = [];
-    let est = 0;
-    for (const img of imageBlobs) {
-      const add = Math.ceil(img.size * 0.92) + 64;
-      if (batch.length && est + add > PART_MAX) {
-        batches.push(batch);
-        batch = [];
-        est = 0;
-      }
-      // single image larger than limit: still its own part
-      batch.push(img);
-      est += add;
-      if (est >= PART_MAX) {
-        batches.push(batch);
-        batch = [];
-        est = 0;
-      }
-    }
-    if (batch.length) batches.push(batch);
-
-    const partBlobs = [];
-    // Part 1: data.json only (menu + all lists). Keeps first part small and reliable.
-    {
-      const z = new JSZip();
-      z.file("data.json", dataJson);
-      codexMeasureOut("Compressing part 1 (data)…");
-      partBlobs.push(await z.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } }));
-    }
-    for (let bi = 0; bi < batches.length; bi++) {
-      const z = new JSZip();
-      const folder = z.folder("images");
-      for (const img of batches[bi]) folder.file(img.name, img.blob);
-      codexMeasureOut(`Compressing part ${bi + 2}/${batches.length + 1}…`);
-      let blob = await z.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
-      // If still over limit, split this batch in half and recompress
-      if (blob.size > PART_MAX && batches[bi].length > 1) {
-        const mid = Math.ceil(batches[bi].length / 2);
-        const halves = [batches[bi].slice(0, mid), batches[bi].slice(mid)];
-        for (const half of halves) {
-          const z2 = new JSZip();
-          const f2 = z2.folder("images");
-          for (const img of half) f2.file(img.name, img.blob);
-          partBlobs.push(await z2.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } }));
-        }
-      } else {
-        partBlobs.push(blob);
-      }
-    }
-
-    const ver = (await codexLoadPublishedMeta())?.version || "1.0.0";
-    let totalBytes = 0;
-    for (let pi = 0; pi < partBlobs.length; pi++) {
-      const blob = partBlobs[pi];
-      totalBytes += blob.size;
-      const fname = `codex-arcane-offline-part-${pi + 1}.zip`;
-      const mb = (blob.size / 1048576).toFixed(1);
-      if (blob.size > 25 * 1024 * 1024) {
-        codexMeasureOut(`Warning: ${fname} is ${mb} MB (over 25 MB). Re-run or split manually.`);
-      }
-      codexDownloadBlob(blob, fname);
-      codexMeasureOut(`Downloaded ${fname} (${mb} MB) — ${pi + 1}/${partBlobs.length}`);
-      // browsers often block multi-download without a short gap
-      await new Promise((r) => setTimeout(r, 700));
-    }
-
+    codexMeasureOut("Compressing zip…");
+    const zipBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
+    const ver = (await codexLoadPublishedMeta())?.version || "pack";
+    const fname = `codex-arcane-offline-${ver}.zip`;
+    codexDownloadBlob(zipBlob, fname);
     codexLastMeasure = {
-      total_bytes: totalBytes,
+      total_bytes: zipBlob.size,
       image_count: ok,
       missing: miss,
-      parts: partBlobs.length,
     };
-
-    const partNames = partBlobs.map((_, i) => `codex-arcane-offline-part-${i + 1}.zip`);
-    console.info("[Codex Arcane] Upload these to a GitHub Release, then set app-version.json pack_parts to the asset URLs:", partNames);
     codexMeasureOut(
-      `Done: ${partBlobs.length} part(s), ${(totalBytes / 1048576).toFixed(1)} MB total, ${ok} images, ${miss} missing. ` +
-      `Files are in your Downloads (part-1 = data, other parts = images). ` +
-      `Upload each to a GitHub Release (keep each under 25 MB), then put their URLs in app-version.json as pack_parts.`
+      `Owner zip saved to your Downloads: ${fname} (${(zipBlob.size / 1048576).toFixed(1)} MB, ${ok} images, ${miss} missing). ` +
+      `Upload this file to a GitHub Release, then set pack_url in app-version.json to the asset URL.`
     );
   } catch (err) {
     console.error(err);
@@ -396,6 +324,7 @@ async function codexBuildDownloadPackZip() {
   }
   if (btn) btn.disabled = false;
 }
+
 
 
 

@@ -804,3 +804,9 @@ dialog .sk-page { margin: -.25rem 0; }
   font-size: 0.78rem;
   line-height: 1.35;
 }
+
+.dg-app-btn:disabled {
+  opacity: 1;
+  pointer-events: auto;
+  cursor: pointer;
+}

@@ -1113,7 +1113,8 @@ async function tryBootFromOfflinePack() {
 const APP_VER_KEY = "codex_installed_version";
 
 async function fetchAppMeta() {
-  const urls = [];
+  // Prefer site-root app-version.json (GitHub Pages + Releases pack_url)
+  const urls = ["app-version.json"];
   if (typeof remote !== "undefined" && remote) {
     urls.push(`${CFG.supabaseUrl}/storage/v1/object/public/site/config/app-version.json`);
   }

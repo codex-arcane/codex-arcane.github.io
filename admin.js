@@ -205,6 +205,57 @@ function codexDownloadBlob(blob, filename) {
 }
 
 /** Owner-only: build full pack zip and save to this computer's Downloads. */
+async function codexListStoragePrefix(prefix, limit = 1000) {
+  const root = cfg.supabaseUrl.replace(/\/+$/, "");
+  const out = [];
+  let offset = 0;
+  for (;;) {
+    const listRes = await fetch(`${root}/storage/v1/object/list/site`, {
+      method: "POST",
+      headers: {
+        apikey: cfg.supabaseAnonKey,
+        Authorization: `Bearer ${cfg.supabaseAnonKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ prefix, limit: Math.min(limit, 1000), offset }),
+    });
+    if (!listRes.ok) break;
+    const batch = await listRes.json();
+    if (!Array.isArray(batch) || !batch.length) break;
+    out.push(...batch);
+    if (batch.length < Math.min(limit, 1000)) break;
+    offset += batch.length;
+    if (offset > 20000) break;
+  }
+  return out;
+}
+
+function codexCollectImageNamesFromValue(value, into) {
+  if (value == null) return;
+  if (typeof value === "string") {
+    const s = value.trim();
+    if (!s) return;
+    // Any path/url that ends with an image extension
+    const m = s.match(/([^\s"'<>]+\.(?:png|jpe?g|gif|webp|svg|avif))(?:\?[^"'<>]*)?$/i);
+    if (m) {
+      const base = m[1].split(/[\\/]/).pop().split("?")[0];
+      if (base) into.add(base);
+      return;
+    }
+    // Bare filename sometimes stored without checking extension in odd fields
+    if (/^[\w.\-()]+\.(?:png|jpe?g|gif|webp|svg)$/i.test(s)) into.add(s.split(/[\\/]/).pop());
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((v) => codexCollectImageNamesFromValue(v, into));
+    return;
+  }
+  if (typeof value === "object") {
+    for (const v of Object.values(value)) codexCollectImageNamesFromValue(v, into);
+  }
+}
+
+/** Owner-only: full capture of structure + all category JSON + every available content image. */
 async function codexBuildDownloadPackZip() {
   if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
     codexMeasureOut("Missing Supabase config");
@@ -212,64 +263,77 @@ async function codexBuildDownloadPackZip() {
   }
   const btn = document.getElementById("btn-build-pack-zip");
   if (btn) btn.disabled = true;
-  codexMeasureOut("Building pack zip for you (owner)… lists first.");
+  codexMeasureOut("Full capture: structure + all lists + all site images…");
   try {
     const base = `${cfg.supabaseUrl.replace(/\/+$/, "")}/storage/v1/object/public/site`;
-    let files = [];
-    const listRes = await fetch(`${cfg.supabaseUrl.replace(/\/+$/, "")}/storage/v1/object/list/site`, {
-      method: "POST",
-      headers: {
-        apikey: cfg.supabaseAnonKey,
-        Authorization: `Bearer ${cfg.supabaseAnonKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ prefix: "data", limit: 500 }),
-    });
-    if (listRes.ok) {
-      files = (await listRes.json()).filter((f) => f.name && f.name.endsWith(".json"));
-    } else {
-      const st = await fetch(`${base}/config/structure.json?t=${Date.now()}`, { cache: "no-store" });
-      if (!st.ok) throw new Error("Cannot list categories");
-      const structure0 = await st.json();
-      for (const g of structure0.groups || []) {
-        for (const c of g.categories || []) {
-          if (c && c.id) files.push({ name: c.id + ".json" });
-        }
-      }
-    }
-    if (!files.length) throw new Error("No category JSON found");
 
+    // 1) Structure (menu / groups)
     let structure = { groups: [] };
     try {
       const sr = await fetch(`${base}/config/structure.json?t=${Date.now()}`, { cache: "no-store" });
       if (sr.ok) structure = await sr.json();
     } catch {}
 
+    // 2) Every data/*.json (storage list + structure ids so nothing is skipped)
+    const dataFiles = new Map(); // id -> filename
+    try {
+      const listed = await codexListStoragePrefix("data");
+      for (const f of listed) {
+        if (!f.name || !f.name.endsWith(".json")) continue;
+        // list may return "armor.json" or "data/armor.json" depending on API
+        const raw = f.name.includes("/") ? f.name.split("/").pop() : f.name;
+        const id = raw.replace(/\.json$/i, "");
+        if (id) dataFiles.set(id, raw);
+      }
+    } catch (err) {
+      console.warn("list data", err);
+    }
+    for (const g of structure.groups || []) {
+      for (const c of g.categories || []) {
+        if (c && c.id) dataFiles.set(c.id, c.id + ".json");
+      }
+    }
+    if (!dataFiles.size) throw new Error("No category JSON found in storage or structure");
+
     const categories = [];
     const imageNames = new Set();
-    for (let fi = 0; fi < files.length; fi++) {
-      const fname = files[fi].name;
-      const id = fname.replace(/\.json$/i, "");
-      codexMeasureOut(`Lists ${fi + 1}/${files.length}: ${id}`);
-      const r = await fetch(`${base}/data/${encodeURIComponent(fname)}`, { cache: "no-cache" });
-      if (!r.ok) continue;
-      const items = await r.json();
-      const walk = (o) => {
-        if (!o || typeof o !== "object") return;
-        if (Array.isArray(o)) return o.forEach(walk);
-        for (const [k, v] of Object.entries(o)) {
-          if (/image|icon|src|file/i.test(k) && typeof v === "string" && /\.(png|jpe?g|gif|webp|svg)$/i.test(v)) {
-            imageNames.add(v.split(/[\\/]/).pop().split("?")[0]);
-          } else if (v && typeof v === "object") walk(v);
+    const ids = [...dataFiles.keys()];
+    for (let fi = 0; fi < ids.length; fi++) {
+      const id = ids[fi];
+      const fname = dataFiles.get(id);
+      codexMeasureOut(`Lists ${fi + 1}/${ids.length}: ${id}`);
+      let items = [];
+      try {
+        const r = await fetch(`${base}/data/${encodeURIComponent(fname)}?t=${Date.now()}`, { cache: "no-store" });
+        if (r.ok) {
+          const json = await r.json();
+          items = Array.isArray(json) ? json : (json && Array.isArray(json.items) ? json.items : []);
         }
-      };
-      walk(items);
+      } catch {}
+      codexCollectImageNamesFromValue(items, imageNames);
       let name = id, section = "";
       for (const g of structure.groups || []) {
         const hit = (g.categories || []).find((c) => c.id === id);
-        if (hit) { name = hit.name || id; section = hit.section || ""; break; }
+        if (hit) {
+          name = hit.name || id;
+          section = hit.section || "";
+          break;
+        }
       }
-      categories.push({ id, name, section, items: Array.isArray(items) ? items : [] });
+      categories.push({ id, name, section, items });
+    }
+
+    // 3) Also list images/ on storage and include every file (covers icons not referenced oddly)
+    codexMeasureOut("Listing images folder on the site…");
+    try {
+      const imgs = await codexListStoragePrefix("images");
+      for (const f of imgs) {
+        if (!f.name) continue;
+        const raw = f.name.includes("/") ? f.name.split("/").pop() : f.name;
+        if (/\.(png|jpe?g|gif|webp|svg|avif)$/i.test(raw)) imageNames.add(raw);
+      }
+    } catch (err) {
+      console.warn("list images", err);
     }
 
     const payload = {
@@ -296,14 +360,18 @@ async function codexBuildDownloadPackZip() {
           const r = await fetch(`${base}/images/${encodeURIComponent(name)}`, { cache: "no-cache" });
           if (!r.ok) { miss++; continue; }
           const blob = await r.blob();
+          if (!blob || !blob.size) { miss++; continue; }
           folder.file(name, blob);
           ok++;
         } catch { miss++; }
-        if (idx % 20 === 0) codexMeasureOut(`Images ${idx + 1}/${arr.length} (saved ${ok}, missing ${miss})…`);
+        if (idx % 25 === 0 || idx === arr.length - 1) {
+          codexMeasureOut(`Images ${idx + 1}/${arr.length} (saved ${ok}, not on server ${miss})…`);
+        }
       }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(arr.length, 1)) }, () => worker()));
-    codexMeasureOut("Compressing zip…");
+
+    codexMeasureOut("Compressing full pack zip…");
     const zipBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
     const ver = (await codexLoadPublishedMeta())?.version || "pack";
     const fname = `codex-arcane-offline-${ver}.zip`;
@@ -312,11 +380,19 @@ async function codexBuildDownloadPackZip() {
       total_bytes: zipBlob.size,
       image_count: ok,
       missing: miss,
+      category_count: categories.length,
     };
+    const msg =
+      `Full pack saved: ${fname}\n\n` +
+      `${(zipBlob.size / 1048576).toFixed(1)} MB\n` +
+      `${categories.length} categories\n` +
+      `${ok} images included\n` +
+      `${miss} referenced/listed names not on the server (source has no file)\n\n` +
+      `Upload this zip to a GitHub Release, then set pack_url in app-version.json.`;
     codexMeasureOut(
-      `Owner zip saved to your Downloads: ${fname} (${(zipBlob.size / 1048576).toFixed(1)} MB, ${ok} images, ${miss} missing). ` +
-      `Upload this file to a GitHub Release, then set pack_url in app-version.json to the asset URL.`
+      `Full pack: ${fname} · ${(zipBlob.size / 1048576).toFixed(1)} MB · ${categories.length} categories · ${ok} images · ${miss} not on server. Upload to GitHub Release → app-version.json pack_url.`
     );
+    alert(msg);
   } catch (err) {
     console.error(err);
     codexMeasureOut("Build zip failed: " + (err.message || err));
@@ -324,6 +400,7 @@ async function codexBuildDownloadPackZip() {
   }
   if (btn) btn.disabled = false;
 }
+
 
 
 
@@ -336,8 +413,16 @@ document.addEventListener("click", (e) => {
   else if (t.id === "btn-publish-ver") codexPublishVersion();
   else if (t.id === "btn-build-pack-zip") codexBuildDownloadPackZip();
   else if (t.id === "btn-upload-pack-zip") {
-    const inp = document.getElementById("pack-zip-file");
-    if (inp) inp.click();
+    alert(
+      "Do NOT upload the pack to Supabase (you will get 413 Maximum size exceeded).\n\n" +
+      "Publish offline pack like this:\n" +
+      "1. Build & download pack zip (saves the file on your PC)\n" +
+      "2. GitHub repo → Releases → Draft a new release\n" +
+      "3. Tag e.g. v1.0.0 → attach the zip → Publish\n" +
+      "4. Copy the asset download URL\n" +
+      "5. Commit app-version.json in the repo root with version + pack_url\n\n" +
+      "Users install offline from that GitHub file, not from Supabase."
+    );
   }
 });
 
@@ -430,7 +515,7 @@ async function codexUploadPackZipResumable(file) {
 }
 
 document.addEventListener("change", async (e) => {
-  if (e.target.id !== "pack-zip-file") return;
+  if (e.target.id !== "pack-zip-file") return; // unused: packs go to GitHub Releases, not Supabase
   const file = e.target.files && e.target.files[0];
   e.target.value = "";
   if (!file) return;

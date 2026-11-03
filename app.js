@@ -285,6 +285,13 @@ function renderMenu() {
       <p class="dg-app-hint muted" id="menu-app-hint"></p>
     </div>`;
   $("#menu-list").innerHTML = top + groups + app;
+  // Wire immediately so the button works even before async label refresh finishes
+  const mainBtn = document.getElementById("menu-app-main");
+  if (mainBtn) {
+    mainBtn.disabled = false;
+    mainBtn.dataset.wired = ""; // allow re-wire after innerHTML reset
+  }
+  wireMenuAppMainButton();
   refreshMenuAppButton();
 }
 
@@ -872,19 +879,44 @@ async function refreshMenuAppButton() {
   const btn = document.getElementById("menu-app-main");
   const sub = document.getElementById("menu-app-sub");
   if (!btn) return;
-  btn.disabled = true;
+  // Never disable — a disabled button swallows clicks ("nothing happens").
+  btn.disabled = false;
   try {
     const info = await resolveAppButton();
     btn.dataset.app = info.action;
     btn.textContent = info.label;
-    btn.disabled = false;
     if (sub) sub.textContent = info.sub || "";
   } catch {
-    btn.disabled = false;
     btn.dataset.app = isStandaloneApp() ? "install-offline" : "install-app";
     btn.textContent = isStandaloneApp() ? "Install offline version" : "Install app";
     if (sub) sub.textContent = "";
   }
+  wireMenuAppMainButton();
+}
+
+function wireMenuAppMainButton() {
+  const btn = document.getElementById("menu-app-main");
+  if (!btn || btn.dataset.wired === "1") return;
+  btn.dataset.wired = "1";
+  btn.disabled = false;
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const action = btn.dataset.app || "install-app";
+    menuAppHint("Working…");
+    try {
+      if (action === "install-app") {
+        offerPwaInstall(menuAppHint, true);
+      } else if (action === "install-offline" || action === "install-latest") {
+        startOfflinePackDownload();
+      } else {
+        alert("Unknown action: " + action);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error: " + (err.message || err));
+    }
+  });
 }
 
 function showInstallNowButton(hintFn) {
@@ -916,7 +948,9 @@ function showInstallNowButton(hintFn) {
 async function offerPwaInstall(hintFn, fromUserClick) {
   const hint = typeof hintFn === "function" ? hintFn : menuAppHint;
   if (isStandaloneApp()) {
-    hint("You are already using the installed app. Use “Install offline version” to save data.");
+    const msg = "You are already using the installed app. Use “Install offline version” to save offline data.";
+    hint(msg);
+    alert(msg);
     await refreshMenuAppButton();
     return;
   }
@@ -926,9 +960,13 @@ async function offerPwaInstall(hintFn, fromUserClick) {
       const choice = await deferredInstall.userChoice;
       if (choice.outcome === "accepted") {
         deferredInstall = null;
-        hint("Installing… Open Codex Arcane from your home screen when it appears.");
+        const msg = "Installing… Open Codex Arcane from your home screen when it appears.";
+        hint(msg);
+        alert(msg);
       } else {
-        hint("Install cancelled. You can press Install app again anytime.");
+        const msg = "Install cancelled. You can press Install app again anytime.";
+        hint(msg);
+        alert(msg);
       }
       return;
     } catch (err) {
@@ -936,12 +974,13 @@ async function offerPwaInstall(hintFn, fromUserClick) {
     }
   }
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  if (isIOS) {
-    hint("iPhone/iPad: tap Share → Add to Home Screen.");
-  } else {
-    hint("Chrome did not show a popup. Use the browser menu ⋮ → Install app / Install page as app.");
-  }
+  const msg = isIOS
+    ? "To install on iPhone/iPad: tap Share → Add to Home Screen."
+    : "Chrome did not show an automatic install popup.\n\nUse the browser menu ⋮ → Install app (or Install page as app).\n\nThen open the app from your home screen and use Install offline version.";
+  hint(msg.replace(/\n\n/g, " "));
+  alert(msg.replace(/\\n/g, "\n"));
 }
+
 
 
 
@@ -1166,6 +1205,7 @@ async function packUrlReachable(url) {
 }
 
 
+
 function offlineProgressHint(hint, received, total) {
   if (total > 0) {
     const pct = Math.min(100, Math.round((received / total) * 100));
@@ -1175,7 +1215,6 @@ function offlineProgressHint(hint, received, total) {
   }
 }
 
-/** After pack zip: fetch any missing images that exist on the live website. */
 async function fillMissingImagesFromSite(expectedNames, savedNames, hint, baseReceived, totalBudget) {
   if (!remote || !CFG.supabaseUrl) return { added: 0, notOnSite: 0 };
   const missing = [];
@@ -1199,13 +1238,10 @@ async function fillMissingImagesFromSite(expectedNames, savedNames, hint, baseRe
         savedNames.add(name);
         added++;
       } catch { notOnSite++; }
-      // Map fill phase onto remaining progress bar if we have a total budget
       if (totalBudget > 0) {
         const frac = missing.length ? (idx + 1) / missing.length : 1;
         const fake = baseReceived + Math.floor((totalBudget - baseReceived) * frac * 0.15);
         offlineProgressHint(hint, Math.min(fake, totalBudget), totalBudget);
-      } else {
-        offlineProgressHint(hint, baseReceived + added * 8000, baseReceived + missing.length * 8000);
       }
     }
   }
@@ -1213,143 +1249,259 @@ async function fillMissingImagesFromSite(expectedNames, savedNames, hint, baseRe
   return { added, notOnSite };
 }
 
+/** Install offline pack from an already-downloaded zip Blob (GitHub file or user pick). */
+async function installOfflinePackFromZipBlob(zipBlob, meta, hint) {
+  const JSZip = await loadJSZip();
+  const expectedTotal = (meta && meta.total_bytes) || zipBlob.size || 0;
+  offlineProgressHint(hint, 0, expectedTotal);
+  const zip = await JSZip.loadAsync(zipBlob);
+  let payload = null;
+  const savedNames = new Set();
+  let n = 0;
+  const dataFile = zip.file("data.json");
+  if (dataFile) {
+    payload = JSON.parse(await dataFile.async("string"));
+    await applyPackPayload(payload);
+  }
+  const entries = [];
+  zip.forEach((path, entry) => {
+    if (entry.dir || !path.startsWith("images/")) return;
+    const name = path.slice(7);
+    if (name) entries.push([name, entry]);
+  });
+  const batch = 80;
+  for (let i = 0; i < entries.length; i += batch) {
+    const slice = entries.slice(i, i + batch);
+    const blobs = await Promise.all(slice.map(([name, entry]) => entry.async("blob").then((blob) => [name, blob])));
+    await idbPutImageMany(blobs);
+    for (const [name] of blobs) savedNames.add(name);
+    n += blobs.length;
+    offlineProgressHint(hint, Math.min(expectedTotal, Math.floor(expectedTotal * ((i + batch) / Math.max(entries.length, 1)))), expectedTotal);
+  }
+  if (!payload) throw new Error("Pack zip has no data.json");
+  const expectedImgs = collectImageNames(payload.categories || []);
+  const fill = await fillMissingImagesFromSite(expectedImgs, savedNames, hint, zipBlob.size, expectedTotal || zipBlob.size);
+  n = savedNames.size;
+  await idbSetPack({
+    payload,
+    compressedBytes: zipBlob.size,
+    built_at: payload.built_at || new Date().toISOString(),
+    with_images: true,
+    imageCount: n,
+    version: (meta && meta.version) || null,
+  });
+  hydrateOfflineImageMap().catch(() => {});
+  writeCachedPackBytes(zipBlob.size);
+  if (meta && meta.version) setInstalledVersion(meta.version);
+  offlineProgressHint(hint, expectedTotal || zipBlob.size, expectedTotal || zipBlob.size);
+  return {
+    ok: true,
+    bytes: zipBlob.size,
+    images: n,
+    categories: (payload.categories || []).length,
+    filledFromSite: fill.added,
+    version: (meta && meta.version) || null,
+  };
+}
+
+function pickOfflinePackFile() {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".zip,application/zip";
+    input.style.display = "none";
+    document.body.appendChild(input);
+    input.onchange = () => {
+      const file = input.files && input.files[0];
+      input.remove();
+      resolve(file || null);
+    };
+    input.click();
+  });
+}
+
 async function tryDownloadPublishedZip(meta, hint) {
   const urls = meta && Array.isArray(meta.pack_parts) && meta.pack_parts.length
     ? meta.pack_parts
     : (meta && meta.pack_url ? [meta.pack_url] : []);
   if (!urls.length) return null;
-  if (!(await packUrlReachable(urls[0]))) return null;
-  const JSZip = await loadJSZip();
-  let payload = null, n = 0, bytes = 0;
-  const savedNames = new Set();
-  const expectedTotal = meta.total_bytes || 0;
-  for (let pi = 0; pi < urls.length; pi++) {
-    const res = await fetch(urls[pi], { cache: "no-cache" });
-    if (!res.ok) {
-      if (pi === 0) return null;
-      throw new Error(`Pack part ${pi + 1} failed (${res.status})`);
+  // GitHub Release assets usually block browser fetch (no CORS). Detect and fall back.
+  try {
+    if (!(await packUrlReachable(urls[0]))) {
+      return { ok: false, corsOrBlocked: true, urls };
     }
-    const partLen = parseInt(res.headers.get("content-length") || "0", 10) || 0;
-    const totalLen = (urls.length === 1 && (partLen || expectedTotal))
-      ? (partLen || expectedTotal)
-      : (expectedTotal || partLen);
-    let zipBlob;
-    if (res.body && res.body.getReader) {
-      const reader = res.body.getReader();
+  } catch {
+    return { ok: false, corsOrBlocked: true, urls };
+  }
+  try {
+    const expectedTotal = meta.total_bytes || 0;
+    let bytes = 0;
+    let lastBlob = null;
+    // Single-file packs: one zip with data.json + images
+    if (urls.length === 1) {
+      const res = await fetch(urls[0], { cache: "no-cache" });
+      if (!res.ok) return { ok: false, corsOrBlocked: false, status: res.status, urls };
+      const totalLen = parseInt(res.headers.get("content-length") || "0", 10) || expectedTotal;
+      let zipBlob;
+      if (res.body && res.body.getReader) {
+        const reader = res.body.getReader();
+        const chunks = [];
+        let received = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.byteLength;
+          offlineProgressHint(hint, received, totalLen || expectedTotal);
+        }
+        zipBlob = new Blob(chunks, { type: "application/zip" });
+      } else {
+        zipBlob = await res.blob();
+      }
+      return await installOfflinePackFromZipBlob(zipBlob, meta, hint);
+    }
+    // Multi-part: download each and merge (same as before via sequential install is hard;
+    // combine blobs only if each is a full zip of images — use sequential JSZip merge)
+    const JSZip = await loadJSZip();
+    let payload = null;
+    const savedNames = new Set();
+    let n = 0;
+    for (let pi = 0; pi < urls.length; pi++) {
+      const res = await fetch(urls[pi], { cache: "no-cache" });
+      if (!res.ok) throw new Error("Part " + (pi + 1) + " failed");
+      const partLen = parseInt(res.headers.get("content-length") || "0", 10) || 0;
       const chunks = [];
       let received = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.byteLength;
-        offlineProgressHint(hint, bytes + received, totalLen > 0 ? (urls.length === 1 ? totalLen : expectedTotal || (bytes + received)) : 0);
+      if (res.body && res.body.getReader) {
+        const reader = res.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.byteLength;
+          offlineProgressHint(hint, bytes + received, expectedTotal || bytes + received);
+        }
       }
-      zipBlob = new Blob(chunks, { type: "application/zip" });
-    } else {
-      zipBlob = await res.blob();
-      offlineProgressHint(hint, bytes + zipBlob.size, expectedTotal || bytes + zipBlob.size);
+      const zipBlob = chunks.length ? new Blob(chunks, { type: "application/zip" }) : await res.blob();
+      bytes += zipBlob.size;
+      const zip = await JSZip.loadAsync(zipBlob);
+      const dataFile = zip.file("data.json");
+      if (dataFile) {
+        payload = JSON.parse(await dataFile.async("string"));
+        await applyPackPayload(payload);
+      }
+      const entries = [];
+      zip.forEach((path, entry) => {
+        if (entry.dir || !path.startsWith("images/")) return;
+        const name = path.slice(7);
+        if (name) entries.push([name, entry]);
+      });
+      for (let i = 0; i < entries.length; i += 80) {
+        const slice = entries.slice(i, i + 80);
+        const blobs = await Promise.all(slice.map(([name, entry]) => entry.async("blob").then((b) => [name, b])));
+        await idbPutImageMany(blobs);
+        for (const [name] of blobs) savedNames.add(name);
+        n += blobs.length;
+      }
     }
-    bytes += zipBlob.size;
-    const zip = await JSZip.loadAsync(zipBlob);
-    const dataFile = zip.file("data.json");
-    if (dataFile) {
-      payload = JSON.parse(await dataFile.async("string"));
-      await applyPackPayload(payload);
-    }
-    const entries = [];
-    zip.forEach((path, entry) => {
-      if (entry.dir || !path.startsWith("images/")) return;
-      const name = path.slice(7);
-      if (name) entries.push([name, entry]);
+    if (!payload) throw new Error("Pack has no data.json");
+    const expectedImgs = collectImageNames(payload.categories || []);
+    const fill = await fillMissingImagesFromSite(expectedImgs, savedNames, hint, bytes, expectedTotal || bytes);
+    await idbSetPack({
+      payload,
+      compressedBytes: bytes,
+      built_at: payload.built_at || new Date().toISOString(),
+      with_images: true,
+      imageCount: savedNames.size,
+      version: meta.version || null,
     });
-    const batch = 80;
-    for (let i = 0; i < entries.length; i += batch) {
-      const slice = entries.slice(i, i + batch);
-      const blobs = await Promise.all(slice.map(([name, entry]) => entry.async("blob").then((blob) => [name, blob])));
-      await idbPutImageMany(blobs);
-      for (const [name] of blobs) savedNames.add(name);
-      n += blobs.length;
-      offlineProgressHint(hint, bytes, expectedTotal || bytes);
-    }
+    hydrateOfflineImageMap().catch(() => {});
+    writeCachedPackBytes(bytes);
+    if (meta.version) setInstalledVersion(meta.version);
+    return {
+      ok: true,
+      bytes,
+      images: savedNames.size,
+      categories: (payload.categories || []).length,
+      filledFromSite: fill.added,
+      version: meta.version || null,
+    };
+  } catch (err) {
+    console.warn("pack download", err);
+    // Likely CORS from GitHub Releases
+    return { ok: false, corsOrBlocked: true, urls, error: String(err.message || err) };
   }
-  if (!payload) throw new Error("Pack zip has no data.json");
-
-  // Complete from live website: any icon the data needs that is on the site but was not in the zip
-  const expectedImgs = collectImageNames(payload.categories || []);
-  const fill = await fillMissingImagesFromSite(expectedImgs, savedNames, hint, bytes, expectedTotal || bytes);
-  n = savedNames.size;
-
-  await idbSetPack({
-    payload,
-    compressedBytes: bytes,
-    built_at: payload.built_at || new Date().toISOString(),
-    with_images: true,
-    imageCount: n,
-    version: meta.version || null,
-  });
-  hydrateOfflineImageMap().catch(() => {});
-  if (bytes > 0) writeCachedPackBytes(bytes);
-  if (meta.version) setInstalledVersion(meta.version);
-  if (expectedTotal > 0) offlineProgressHint(hint, expectedTotal, expectedTotal);
-  else offlineProgressHint(hint, bytes, bytes);
-
-  return {
-    ok: true,
-    bytes,
-    images: n,
-    categories: (payload.categories || []).length,
-    filledFromSite: fill.added,
-    notOnSite: fill.notOnSite,
-    version: meta.version || null,
-  };
 }
 
 async function startOfflinePackDownload() {
   const hint = menuAppHint;
   if (!navigator.onLine) {
-    hint("You need an internet connection to install or update offline data.");
+    alert("You need an internet connection to install or update offline data.");
     return;
   }
   try {
     const meta = await fetchAppMeta();
     if (!meta.pack_url && !(meta.pack_parts && meta.pack_parts.length)) {
-      alert("Offline pack is not configured.\n\nAdd app-version.json with pack_url (GitHub Release zip).");
+      alert("Offline pack is not configured.\\n\\nAdd app-version.json with pack_url (GitHub Release zip).");
       return;
     }
     const total = meta.total_bytes || 0;
     const ok = confirm(
-      `Install offline data on this device?\n\n` +
-      (meta.version ? `Version ${meta.version}\n` : "") +
-      (total ? `About ${formatBytes(total)}\n` : "") +
-      `Uses the pack plus any extra images available on the website.\n\nContinue?`
+      "Install offline data on this device?\\n\\n" +
+      (meta.version ? "Version " + meta.version + "\\n" : "") +
+      (total ? "About " + formatBytes(total) + "\\n" : "") +
+      "Continue?"
     );
     if (!ok) {
       hint("Cancelled.");
       return;
     }
     offlineProgressHint(hint, 0, total);
-    const result = await tryDownloadPublishedZip(meta, hint);
+    let result = await tryDownloadPublishedZip(meta, hint);
+
+    // GitHub Releases block browser fetch (CORS). User downloads the file, then we import it.
+    if (!result || !result.ok) {
+      const packUrl = (meta.pack_parts && meta.pack_parts[0]) || meta.pack_url;
+      alert(
+        "The pack is on GitHub, and the browser cannot install it automatically (security/CORS).\\n\\n" +
+        "Next steps:\\n" +
+        "1. OK opens the pack download in a new tab — wait until the zip finishes.\\n" +
+        "2. Then choose that zip file in the file picker to install offline data."
+      );
+      if (packUrl) window.open(packUrl, "_blank", "noopener");
+      hint("Select the downloaded zip to install…");
+      const file = await pickOfflinePackFile();
+      if (!file) {
+        hint("No file selected. Offline install cancelled.");
+        alert("No zip selected. Press Install offline version again when the download has finished.");
+        return;
+      }
+      offlineProgressHint(hint, 0, file.size);
+      result = await installOfflinePackFromZipBlob(file, meta, hint);
+    }
+
     if (result && result.ok) {
       offlineProgressHint(hint, total || result.bytes, total || result.bytes);
-      const doneMsg =
-        `Offline install complete.\n\n` +
-        `${formatBytes(result.bytes)} pack` +
-        (result.filledFromSite ? `\n+ ${result.filledFromSite} images from the website` : "") +
-        `\n${result.images} images saved` +
-        (result.version ? `\nVersion ${result.version}` : "");
-      hint(`Done · ${formatBytes(result.bytes)} · ${result.images} images` + (result.version ? ` · v${result.version}` : ""));
-      alert(doneMsg);
+      alert(
+        "Offline install complete.\\n\\n" +
+        formatBytes(result.bytes) + " pack\\n" +
+        result.images + " images saved" +
+        (result.filledFromSite ? "\\n+ " + result.filledFromSite + " from website" : "") +
+        (result.version ? "\\nVersion " + result.version : "")
+      );
+      hint("Done · " + formatBytes(result.bytes) + " · " + result.images + " images" + (result.version ? " · v" + result.version : ""));
       await refreshMenuAppButton();
       return;
     }
-    alert("Could not download the offline pack.\n\nCheck app-version.json pack_url and the GitHub Release.");
+    alert("Offline install failed. Try again and select the zip from your Downloads folder.");
     hint("Download failed.");
   } catch (err) {
+    console.error(err);
     hint("Failed: " + (err.message || err));
     alert("Offline install failed: " + (err.message || err));
   }
 }
+
 
 
 

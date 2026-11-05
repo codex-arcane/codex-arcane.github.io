@@ -320,9 +320,17 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(
 $("#menu-list").onclick = (e) => {
   const appBtn = e.target.closest("[data-app]");
   if (appBtn) {
-    const action = appBtn.dataset.app;
-    if (action === "install-app") offerPwaInstall(menuAppHint, true);
-    else if (action === "install-offline" || action === "install-latest") startOfflinePackDownload();
+    e.preventDefault();
+    const action = appBtn.dataset.app || "install-app";
+    menuAppHint("Working…");
+    try {
+      if (action === "install-app") offerPwaInstall(menuAppHint, true);
+      else if (action === "install-offline" || action === "install-latest") startOfflinePackDownload();
+      else alert("Unknown app action: " + action);
+    } catch (err) {
+      console.error(err);
+      alert("Error: " + (err.message || err));
+    }
     return;
   }
   const nav = e.target.closest("[data-nav]");
@@ -894,6 +902,11 @@ async function refreshMenuAppButton() {
   wireMenuAppMainButton();
 }
 
+function menuAppHint(msg) {
+  const el = document.getElementById("menu-app-hint");
+  if (el) el.textContent = msg || "";
+}
+
 function wireMenuAppMainButton() {
   const btn = document.getElementById("menu-app-main");
   if (!btn || btn.dataset.wired === "1") return;
@@ -947,39 +960,50 @@ function showInstallNowButton(hintFn) {
 /** @param fromUserClick true when called from Install app now (keeps Chrome gesture). */
 async function offerPwaInstall(hintFn, fromUserClick) {
   const hint = typeof hintFn === "function" ? hintFn : menuAppHint;
-  if (isStandaloneApp()) {
-    const msg = "You are already using the installed app. Use “Install offline version” to save offline data.";
-    hint(msg);
-    alert(msg);
-    await refreshMenuAppButton();
-    return;
-  }
-  if (deferredInstall) {
-    try {
-      deferredInstall.prompt();
-      const choice = await deferredInstall.userChoice;
+  try {
+    if (isStandaloneApp()) {
+      const msg = "You are already using the installed app. Use Install offline version to save offline data.";
+      hint(msg);
+      alert(msg);
+      await refreshMenuAppButton();
+      return;
+    }
+    if (deferredInstall) {
+      hint("Opening install dialog…");
+      try { deferredInstall.prompt(); } catch (err) { console.warn("prompt", err); }
+      let choice = { outcome: "timeout" };
+      try {
+        choice = await Promise.race([
+          deferredInstall.userChoice,
+          new Promise((resolve) => setTimeout(() => resolve({ outcome: "timeout" }), 8000)),
+        ]);
+      } catch (err) { console.warn("userChoice", err); }
       if (choice.outcome === "accepted") {
         deferredInstall = null;
         const msg = "Installing… Open Codex Arcane from your home screen when it appears.";
         hint(msg);
         alert(msg);
-      } else {
+        return;
+      }
+      if (choice.outcome === "dismissed") {
         const msg = "Install cancelled. You can press Install app again anytime.";
         hint(msg);
         alert(msg);
+        return;
       }
-      return;
-    } catch (err) {
-      console.warn("install prompt", err);
     }
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const msg = isIOS
+      ? "To install on iPhone/iPad: tap Share → Add to Home Screen."
+      : "Chrome did not show an automatic install popup.\n\nUse the browser menu ⋮ → Install app (or Install page as app).\n\nThen open the app from your home screen and use Install offline version.";
+    hint(isIOS ? msg : "Use browser menu ⋮ → Install app.");
+    alert(msg);
+  } catch (err) {
+    console.error(err);
+    alert("Install error: " + (err.message || err));
   }
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  const msg = isIOS
-    ? "To install on iPhone/iPad: tap Share → Add to Home Screen."
-    : "Chrome did not show an automatic install popup.\n\nUse the browser menu ⋮ → Install app (or Install page as app).\n\nThen open the app from your home screen and use Install offline version.";
-  hint(msg.replace(/\n\n/g, " "));
-  alert(msg.replace(/\\n/g, "\n"));
 }
+
 
 
 
@@ -1435,11 +1459,13 @@ async function tryDownloadPublishedZip(meta, hint) {
 
 async function startOfflinePackDownload() {
   const hint = menuAppHint;
+  hint("Working…");
   if (!navigator.onLine) {
     alert("You need an internet connection to install or update offline data.");
     return;
   }
   try {
+    hint("Checking pack…");
     const meta = await fetchAppMeta();
     if (!meta.pack_url && !(meta.pack_parts && meta.pack_parts.length)) {
       alert("Offline pack is not configured.\\n\\nAdd app-version.json with pack_url (GitHub Release zip).");

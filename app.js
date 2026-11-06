@@ -1466,16 +1466,18 @@ async function startOfflinePackDownload() {
   }
   try {
     hint("Checking pack…");
-    const meta = await fetchAppMeta();
+    let meta = await fetchAppMeta();
+    // Prefer pack_parts / pack_url that the browser can fetch (same origin or Supabase).
+    // GitHub Release URLs usually fail in the browser (no CORS).
     if (!meta.pack_url && !(meta.pack_parts && meta.pack_parts.length)) {
-      alert("Offline pack is not configured.\\n\\nAdd app-version.json with pack_url (GitHub Release zip).");
+      alert("Offline pack is not configured.\n\nOwner must publish the pack (owner panel → Build & publish pack) so pack URLs are available.");
       return;
     }
     const total = meta.total_bytes || 0;
     const ok = confirm(
-      "Install offline data on this device?\\n\\n" +
-      (meta.version ? "Version " + meta.version + "\\n" : "") +
-      (total ? "About " + formatBytes(total) + "\\n" : "") +
+      "Install offline data on this device?\n\n" +
+      (meta.version ? "Version " + meta.version + "\n" : "") +
+      (total ? "About " + formatBytes(total) + "\n" : "") +
       "Continue?"
     );
     if (!ok) {
@@ -1483,43 +1485,83 @@ async function startOfflinePackDownload() {
       return;
     }
     offlineProgressHint(hint, 0, total);
-    let result = await tryDownloadPublishedZip(meta, hint);
 
-    // GitHub Releases block browser fetch (CORS). User downloads the file, then we import it.
-    if (!result || !result.ok) {
-      const packUrl = (meta.pack_parts && meta.pack_parts[0]) || meta.pack_url;
-      alert(
-        "The pack is on GitHub, and the browser cannot install it automatically (security/CORS).\\n\\n" +
-        "Next steps:\\n" +
-        "1. OK opens the pack download in a new tab — wait until the zip finishes.\\n" +
-        "2. Then choose that zip file in the file picker to install offline data."
-      );
-      if (packUrl) window.open(packUrl, "_blank", "noopener");
-      hint("Select the downloaded zip to install…");
-      const file = await pickOfflinePackFile();
-      if (!file) {
-        hint("No file selected. Offline install cancelled.");
-        alert("No zip selected. Press Install offline version again when the download has finished.");
-        return;
+    // If URLs point at github.com/releases, try Supabase public pack parts instead (CORS works).
+    const isGithub = (u) => /github\.com\/.+\/releases\//i.test(u || "");
+    const urls0 = meta.pack_parts && meta.pack_parts.length ? meta.pack_parts : (meta.pack_url ? [meta.pack_url] : []);
+    if (urls0.length && urls0.every(isGithub) && remote && CFG.supabaseUrl) {
+      const base = CFG.supabaseUrl.replace(/\/+$/, "") + "/storage/v1/object/public/site/pack";
+      // Probe common part names + full zip
+      const candidates = [
+        base + "/offline-full.zip",
+        base + "/offline-part-1.zip",
+        base + "/offline-part-2.zip",
+        base + "/offline-part-3.zip",
+        base + "/offline-part-4.zip",
+        base + "/offline-part-5.zip",
+        base + "/offline-part-6.zip",
+        base + "/offline-part-7.zip",
+        base + "/offline-part-8.zip",
+      ];
+      const found = [];
+      for (const u of candidates) {
+        try {
+          const r = await fetch(u, { method: "HEAD", cache: "no-cache" });
+          if (r.ok) found.push(u);
+        } catch {}
       }
-      offlineProgressHint(hint, 0, file.size);
-      result = await installOfflinePackFromZipBlob(file, meta, hint);
+      // HEAD may fail; try GET first byte on part 1
+      if (!found.length) {
+        try {
+          const u = base + "/offline-part-1.zip";
+          const r = await fetch(u, { method: "GET", headers: { Range: "bytes=0-0" }, cache: "no-cache" });
+          if (r.ok || r.status === 206) {
+            found.push(u);
+            for (let n = 2; n <= 12; n++) {
+              const u2 = base + "/offline-part-" + n + ".zip";
+              try {
+                const r2 = await fetch(u2, { method: "GET", headers: { Range: "bytes=0-0" }, cache: "no-cache" });
+                if (r2.ok || r2.status === 206) found.push(u2);
+                else break;
+              } catch { break; }
+            }
+          }
+        } catch {}
+      }
+      if (found.length) {
+        meta = { ...meta, pack_url: found.length === 1 ? found[0] : null, pack_parts: found.length > 1 ? found : null };
+        if (found.length === 1) meta.pack_url = found[0];
+        if (found.length >= 1) meta.pack_parts = found;
+      }
     }
 
+    const result = await tryDownloadPublishedZip(meta, hint);
     if (result && result.ok) {
       offlineProgressHint(hint, total || result.bytes, total || result.bytes);
       alert(
-        "Offline install complete.\\n\\n" +
-        formatBytes(result.bytes) + " pack\\n" +
+        "Offline install complete.\n\n" +
+        formatBytes(result.bytes) + " pack\n" +
         result.images + " images saved" +
-        (result.filledFromSite ? "\\n+ " + result.filledFromSite + " from website" : "") +
-        (result.version ? "\\nVersion " + result.version : "")
+        (result.filledFromSite ? "\n+ " + result.filledFromSite + " from website" : "") +
+        (result.version ? "\nVersion " + result.version : "")
       );
       hint("Done · " + formatBytes(result.bytes) + " · " + result.images + " images" + (result.version ? " · v" + result.version : ""));
       await refreshMenuAppButton();
       return;
     }
-    alert("Offline install failed. Try again and select the zip from your Downloads folder.");
+
+    // Last resort: only if still GitHub-only and fetch failed
+    const packUrl = (meta.pack_parts && meta.pack_parts[0]) || meta.pack_url || "";
+    if (/github\.com\/.+\/releases\//i.test(packUrl)) {
+      alert(
+        "This pack is only on GitHub Releases, so one-tap install cannot work in the browser.\n\n" +
+        "Owner: use the owner panel → Build & publish pack (uploads to the site storage in parts).\n" +
+        "Then users can install offline with one press."
+      );
+      hint("Pack host does not allow one-tap install.");
+      return;
+    }
+    alert("Could not download the offline pack. Check that the pack was published and try again.");
     hint("Download failed.");
   } catch (err) {
     console.error(err);
@@ -1527,6 +1569,7 @@ async function startOfflinePackDownload() {
     alert("Offline install failed: " + (err.message || err));
   }
 }
+
 
 
 

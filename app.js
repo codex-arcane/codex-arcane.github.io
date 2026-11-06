@@ -1176,42 +1176,84 @@ async function tryBootFromOfflinePack() {
 const APP_VER_KEY = "codex_installed_version";
 
 async function fetchAppMeta() {
-  // Prefer site-root app-version.json (GitHub Pages + Releases pack_url)
+  // Collect from site + Supabase; prefer a pack the browser can actually fetch (not GitHub Releases).
   const urls = ["app-version.json"];
-  if (typeof remote !== "undefined" && remote) {
+  if (typeof remote !== "undefined" && remote && CFG.supabaseUrl) {
     urls.push(`${CFG.supabaseUrl}/storage/v1/object/public/site/config/app-version.json`);
   }
   urls.push("pack-meta.json");
+
+  const results = [];
   for (const url of urls) {
     try {
-      const r = await fetch(url, { cache: "no-cache" });
+      const r = await fetch(url + (url.includes("?") ? "&" : "?") + "t=" + Date.now(), { cache: "no-store" });
       if (!r.ok) continue;
       const j = await r.json();
       const version = String(j.version || j.ver || "").trim();
       const bytes = parseInt(j.total_bytes || j.totalBytes || j.bytes || 0, 10) || 0;
       let pack_url = j.pack_url || j.packUrl || j.zip_url || "";
-      if (!pack_url && remote) {
-        // default location owner can publish to
+      let pack_parts = Array.isArray(j.pack_parts) && j.pack_parts.length ? j.pack_parts.slice() : null;
+      if (!pack_url && !pack_parts && remote && CFG.supabaseUrl) {
         pack_url = `${CFG.supabaseUrl}/storage/v1/object/public/site/pack/offline-full.zip`;
       }
-      if (version || bytes || pack_url) {
+      if (version || bytes || pack_url || pack_parts) {
         if (bytes > 0) writeCachedPackBytes(bytes);
-        return {
+        results.push({
           version: version || null,
           total_bytes: bytes || readCachedPackBytes() || 0,
           updated_at: j.updated_at || j.updated || null,
           pack_url: pack_url || null,
-          pack_parts: Array.isArray(j.pack_parts) && j.pack_parts.length ? j.pack_parts : null,
+          pack_parts,
           source: url,
-        };
+        });
       }
     } catch {}
   }
-  const fallbackPack = remote
-    ? `${CFG.supabaseUrl}/storage/v1/object/public/site/pack/offline-full.zip`
+
+  const isGithub = (u) => /github\.com\/.+\/releases\//i.test(String(u || ""));
+  const usable = (m) => {
+    if (!m) return false;
+    const list = m.pack_parts && m.pack_parts.length ? m.pack_parts : (m.pack_url ? [m.pack_url] : []);
+    if (!list.length) return false;
+    // Prefer non-GitHub (Supabase / same origin) for one-tap install
+    return list.some((u) => !isGithub(u));
+  };
+
+  let best = results.find(usable) || results[0] || null;
+
+  // If still only GitHub, probe Supabase pack parts directly
+  if ((!best || !usable(best)) && remote && CFG.supabaseUrl) {
+    const base = `${CFG.supabaseUrl.replace(/\/+$/, "")}/storage/v1/object/public/site/pack`;
+    const found = [];
+    for (let n = 1; n <= 16; n++) {
+      const u = `${base}/offline-part-${n}.zip`;
+      try {
+        const r = await fetch(u, { method: "GET", headers: { Range: "bytes=0-0" }, cache: "no-store" });
+        if (r.ok || r.status === 206) found.push(u);
+        else break;
+      } catch {
+        break;
+      }
+    }
+    if (found.length) {
+      best = {
+        version: (best && best.version) || null,
+        total_bytes: (best && best.total_bytes) || readCachedPackBytes() || 0,
+        updated_at: (best && best.updated_at) || null,
+        pack_url: found[0],
+        pack_parts: found,
+        source: "supabase-probe",
+      };
+    }
+  }
+
+  if (best) return best;
+  const fallbackPack = remote && CFG.supabaseUrl
+    ? `${CFG.supabaseUrl}/storage/v1/object/public/site/pack/offline-part-1.zip`
     : null;
-  return { version: null, total_bytes: readCachedPackBytes() || 0, updated_at: null, pack_url: fallbackPack, source: "none" };
+  return { version: null, total_bytes: readCachedPackBytes() || 0, updated_at: null, pack_url: fallbackPack, pack_parts: null, source: "none" };
 }
+
 
 /** Fast path: the pack published by the owner: one zip, or several parts (a big pack is split to fit the 50 MB file limit). */
 async function packUrlReachable(url) {

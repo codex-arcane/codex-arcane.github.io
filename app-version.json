@@ -1,5 +1,13 @@
 {
   "version": "1.0.2",
-  "total_bytes": 207618048,
-  "pack_url": "https://github.com/codex-arcane/codex-arcane.github.io/releases/download/v1.0.2/codex-arcane-offline-1.0.2.zip"
+  "total_bytes": 207842832,
+  "pack_url": "https://dtirdzshfvqqzmsibtfq.supabase.co/storage/v1/object/public/site/pack/offline-part-1.zip",
+  "pack_parts": [
+    "https://dtirdzshfvqqzmsibtfq.supabase.co/storage/v1/object/public/site/pack/offline-part-1.zip",
+    "https://dtirdzshfvqqzmsibtfq.supabase.co/storage/v1/object/public/site/pack/offline-part-2.zip",
+    "https://dtirdzshfvqqzmsibtfq.supabase.co/storage/v1/object/public/site/pack/offline-part-3.zip",
+    "https://dtirdzshfvqqzmsibtfq.supabase.co/storage/v1/object/public/site/pack/offline-part-4.zip",
+    "https://dtirdzshfvqqzmsibtfq.supabase.co/storage/v1/object/public/site/pack/offline-part-5.zip",
+    "https://dtirdzshfvqqzmsibtfq.supabase.co/storage/v1/object/public/site/pack/offline-part-6.zip"
+  ]
 }
